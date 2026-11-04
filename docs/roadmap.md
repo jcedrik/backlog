@@ -9,7 +9,7 @@ in the README, reproducible with one `make` target, and covered by CI.
 - PyMatching threshold sweep with sinter: `make baseline`, `make plot`
 - Result: threshold about 0.73% (crossing of d = 5 and d = 7)
 
-## Phase 2: C++ Union-Find decoder (v0.2 done)
+## Phase 2: C++ Union-Find decoder (v0.3 done)
 
 Done:
 - [x] Union-Find growth + peeling, dependency free, CLI on plain-text graphs
@@ -21,19 +21,23 @@ Done:
       instead of scanning every edge each round: speed parity with
       PyMatching 2 on one core, d = 3 to 13
 - [x] Reference decoder + fuzzing: fast and reference corrections identical
-      on 75,000 random cases
-- [x] Mutation testing: 10 injected bugs, all caught (`make mutants`)
-- [x] Python package (pybind11, `pip install .`) and sinter custom decoder
-      (`backlog-uf`), sinter command line included
+      on 75,000 random cases, parallel edges included
+- [x] Mutation testing: 16 injected bugs, all caught (`make mutants`)
+- [x] Python package (pybind11, `pip install .`) and sinter custom decoders,
+      sinter command line included
+- [x] Streaming: sliding windows (commit, buffer), windows with the same
+      structure share one decoder, per-window latency measured in C++
+- [x] Windowed accuracy matches whole-shot decoding once the buffer is d
+      rounds (at most 2.3% more logical errors, same shots)
+- [x] Backlog measured: one core keeps up with 1 µs rounds to d = 9 at
+      p = 0.1% and to d = 5 at p = 0.3%, and falls behind beyond
 
 Next:
-- [ ] Streaming mode: decode a window of rounds, commit the oldest ones,
-      slide. Report p50/p99/p99.9 latency per committed round, the metric
-      that decides whether a decoder keeps up with a 1 µs cycle
-- [ ] Check that windowed decoding matches whole-shot accuracy once the
-      buffer is at least d rounds
-- [ ] Parallel windows (decode independent windows on several cores, then
-      stitch), the CPU answer to the backlog problem
+- [ ] Parallel windows (Skoric et al. 2023, Tan et al. 2023): decode
+      independent windows on several cores, then the seams between them.
+      Throughput should scale with cores, the way past the single-core limit
+- [ ] Report the logical clock cost: how long a feed-forward decision waits
+      for its window
 - [ ] Faster than PyMatching 2 at p = 0.3%: profile shows no single hotspot,
       so this needs an algorithmic change, not tuning
 
@@ -66,7 +70,8 @@ Next:
 - [x] A latency table (CPU, and ns per cycle after place and route)
 - [x] Tests that prove correctness, not just that code runs
 - [x] An honest limitations section
-- [x] The CV line: "Weighted Union-Find QEC decoder in C++ (pip, sinter):
-      threshold matches PyMatching within error bars, single-core speed on
-      par with PyMatching 2, bit-exact against a reference on 75,000 fuzzed
-      cases; 1D VHDL core placed and routed at 94.5 MHz"
+- [x] The CV line: "Streaming QEC decoder (weighted Union-Find, C++, pip,
+      sinter): threshold matches PyMatching within error bars, sliding
+      windows within 2.3% of whole-shot accuracy, real-time on one core to
+      d = 9 at p = 0.1%; bit-exact against a reference on 75,000 fuzzed cases;
+      1D VHDL core placed and routed at 94.5 MHz"

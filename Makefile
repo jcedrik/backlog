@@ -1,7 +1,7 @@
 PY ?= python3
 
 .PHONY: help deps install cpp test test-cpp test-py test-cli mutants quick baseline plot \
-        compare plots latency hw hw-sim all clean
+        compare plots streaming streaming-plot latency hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
@@ -27,7 +27,7 @@ test-py:  ## pytest: accuracy gates against PyMatching, sinter integration
 test-cli: cpp  ## command-line decoder on graphs exported from Stim, gated against PyMatching
 	./scripts/run_tests.sh
 
-mutants:  ## mutation testing: every injected bug must make the test suite fail (~1 min)
+mutants:  ## mutation testing: every injected bug must make the test suite fail (~2 min)
 	$(PY) scripts/mutation_test.py
 
 quick:  ## tiny PyMatching threshold sweep into results/quick/ (smoke test, seconds)
@@ -44,6 +44,13 @@ compare:  ## sinter sweep, PyMatching vs weighted and unweighted UF (long, resum
 
 plots:  ## redraw the comparison figures from results/threshold_comparison.csv
 	cd python && $(PY) threshold_comparison.py plot
+
+streaming:  ## sliding windows: accuracy vs buffer, per-window latency, backlog (minutes, idle machine)
+	cd python && $(PY) streaming_benchmark.py accuracy && $(PY) streaming_benchmark.py latency \
+	  && $(PY) streaming_benchmark.py plot
+
+streaming-plot:  ## redraw results/streaming.png from the CSVs
+	cd python && $(PY) streaming_benchmark.py plot
 
 latency:  ## decoding time vs PyMatching, d = 3 to 13 (run on an idle machine)
 	cd python && $(PY) latency_benchmark.py

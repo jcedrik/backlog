@@ -1,7 +1,8 @@
 # C++ core
 
-The weighted Union-Find decoder, with no dependencies (C++17 standard library
-only). The same code backs three front ends:
+The weighted Union-Find decoder and its sliding-window (streaming) version,
+with no dependencies (C++17 standard library only). The same code backs three
+front ends:
 
 - the Python package `backlog` (pybind11 bindings in `bindings/module.cpp`,
   built by `pip install .` from the repo root);
@@ -17,11 +18,13 @@ How the algorithm works and why the fast version equals the reference:
 ```
 include/backlog/graph.hpp     DecodingGraph: edges, probabilities, integer weights
 include/backlog/decoder.hpp   UnionFindDecoder (fast), ReferenceDecoder (spec)
+include/backlog/window.hpp    SlidingWindowDecoder (streaming)
 src/graph.cpp                 weights from log-likelihoods, validation, file loader
 src/decoder.cpp               event-driven weighted growth, peeling
 src/reference.cpp             synchronous unit rounds, the specification
+src/window.cpp                windows, commits, shared window decoders
 src/main.cpp                  command-line decoder with latency statistics
-tests/test_decoder.cpp        unit tests + 75,000 fuzzed cases, fast == reference
+tests/test_decoder.cpp        unit tests + fuzzing: fast == reference, windows
 bindings/module.cpp           Python module backlog._core
 ```
 
@@ -37,11 +40,12 @@ Expected output of `./build/backlog_tests`:
 
 ```
 fuzz: 75000 random cases, 0 mismatches between fast and reference
-300027 checks, 0 failures
+windows: 75000 random cases, 0 invalid corrections, 0 inconsistent, 0 differences with whole-shot decoding
+303108 checks, 0 failures
 ALL C++ TESTS PASSED
 ```
 
-From the repo root, `make mutants` checks that the suite fails on each of 10
+From the repo root, `make mutants` checks that the suite fails on each of 16
 injected bugs.
 
 ## Command-line decoder
@@ -65,4 +69,5 @@ code 3 if any correction fails to reproduce its syndrome. File formats:
 ## Results
 
 All results live in the main [README](../README.md): accuracy and threshold
-against PyMatching on 12.8 million shots, decoding time from d = 3 to 13.
+against PyMatching on 12.8 million shots, streaming accuracy and backlog,
+decoding time from d = 3 to 13.

@@ -7,7 +7,7 @@ rebuilds the test binary and runs it. A mutant is "killed" when the suite
 fails (a check fails, fast and reference decoders disagree, or the run hangs
 and hits the timeout). Any surviving mutant is a hole in the tests.
 
-    python3 scripts/mutation_test.py        # about a minute
+    python3 scripts/mutation_test.py        # about two minutes
 """
 from __future__ import annotations
 
@@ -78,6 +78,31 @@ MUTANTS = [
     Mutant("log-likelihood weights collapse to uniform",
            "src/graph.cpp",
            "ll[i] = std::log((1.0 - p) / p);", "ll[i] = 1.0;"),
+    # Sliding windows
+    Mutant("window: a committed edge does not carry its flip forward",
+           "src/window.cpp",
+           "                        residual_[u] ^= 1;\n", ""),
+    Mutant("window: flips land in the committed region instead of ahead",
+           "src/window.cpp",
+           "if (u != B && layer_[u] >= w.commit_end) {",
+           "if (u != B && layer_[u] < w.commit_end) {"),
+    Mutant("window: defects created by earlier commits are ignored",
+           "src/window.cpp",
+           "                    local_.push_back(v - lo);\n                    merged = true;",
+           "                    merged = true;"),
+    Mutant("window: windows do not overlap",
+           "src/window.cpp",
+           "for (int32_t s = 0; n > 0; s += commit_) {",
+           "for (int32_t s = 0; n > 0; s += commit_ + buffer_) {"),
+    Mutant("window: edges into the future are dropped",
+           "src/window.cpp",
+           "            for (int32_t e : owned) {\n",
+           "            for (int32_t e : owned) {\n"
+           "                if (high[e] != B && high[e] >= hi) continue;\n"),
+    Mutant("window: edges committed by their far end",
+           "src/window.cpp",
+           "commit.push_back(layer_[low[e]] < w.commit_end ? 1 : 0);",
+           "commit.push_back(high[e] != B && layer_[high[e]] < w.commit_end ? 1 : 0);"),
 ]
 
 
@@ -106,7 +131,12 @@ def run_suite(binary: Path) -> tuple[bool, str]:
     parts = []
     if mism and int(mism.group(1)):
         parts.append(f"{int(mism.group(1))} fast/reference mismatches")
-    if fails and int(fails.group(2)):
+    for pattern, label in ((r"(\d+) invalid corrections", "invalid windowed corrections"),
+                           (r"(\d+) differences with whole-shot", "differences with whole-shot")):
+        found = re.search(pattern, out)
+        if found and int(found.group(1)):
+            parts.append(f"{int(found.group(1))} {label}")
+    if not parts and fails and int(fails.group(2)):
         parts.append(f"{int(fails.group(2))} failed checks")
     if not parts and "bad_alloc" in r.stderr:
         parts.append("runaway memory, stopped by the 1 GB cap")
@@ -138,26 +168,26 @@ def main() -> int:
             return 2
 
         survivors = 0
-        print(f"{'mutant':<55} result")
+        print(f"{'mutant':<62} result")
         for m in MUTANTS:
             for f, text in originals.items():
                 (src / f).write_text(text)
             text = originals[m.file]
             if text.count(m.before) != 1:
-                print(f"{m.name:<55} PATTERN NOT FOUND (update this script)")
+                print(f"{m.name:<62} PATTERN NOT FOUND (update this script)")
                 survivors += 1
                 continue
             (src / m.file).write_text(text.replace(m.before, m.after))
             if not build(build_dir):
-                print(f"{m.name:<55} BUILD FAILED")
+                print(f"{m.name:<62} BUILD FAILED")
                 survivors += 1
                 continue
             passed, how = run_suite(binary)
             if passed:
                 survivors += 1
-                print(f"{m.name:<55} SURVIVED")
+                print(f"{m.name:<62} SURVIVED")
             else:
-                print(f"{m.name:<55} killed: {how}")
+                print(f"{m.name:<62} killed: {how}")
 
         killed = len(MUTANTS) - survivors
         print(f"\n{killed} / {len(MUTANTS)} mutants killed")
