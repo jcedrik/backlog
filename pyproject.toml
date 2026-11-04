@@ -1,0 +1,25 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "backlog-qec"
+version = "0.2.0"
+description = "Real-time Union-Find decoder for quantum error correction, with Stim and sinter integration"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Jean-Cédrik Dorélas" }]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.24", "stim>=1.14", "sinter>=1.14"]
+keywords = ["quantum error correction", "decoder", "union-find", "stim", "sinter", "surface code"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pymatching>=2.2"]
+
+[tool.scikit-build]
+cmake.source-dir = "cpp"
+cmake.build-type = "Release"
+wheel.packages = ["src/backlog"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

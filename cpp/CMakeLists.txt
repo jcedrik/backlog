@@ -9,6 +9,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(BACKLOG_BUILD_TOOLS "Build the CLI and the C++ test suite" ON)
+option(BACKLOG_BUILD_PYTHON "Build the Python extension module" OFF)
+if(SKBUILD)
+  # pip install: only the Python module
+  set(BACKLOG_BUILD_TOOLS OFF)
+  set(BACKLOG_BUILD_PYTHON ON)
+endif()
 
 add_library(backlog_core STATIC
   src/graph.cpp
@@ -29,4 +35,12 @@ if(BACKLOG_BUILD_TOOLS)
 
   enable_testing()
   add_test(NAME decoder_tests COMMAND backlog_tests)
+endif()
+
+if(BACKLOG_BUILD_PYTHON)
+  find_package(Python 3.9 COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(pybind11 CONFIG REQUIRED)
+  pybind11_add_module(_core bindings/module.cpp)
+  target_link_libraries(_core PRIVATE backlog_core)
+  install(TARGETS _core LIBRARY DESTINATION backlog)
 endif()
