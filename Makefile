@@ -1,31 +1,52 @@
 PY ?= python3
 
-.PHONY: help deps quick baseline plot cpp test bench hw hw-sim all clean
+.PHONY: help deps install cpp test test-cpp test-py test-cli mutants quick baseline plot \
+        compare plots latency hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
 
-deps:  ## install Python dependencies
+deps:  ## install the Python dependencies of the experiments
 	$(PY) -m pip install -r requirements.txt
 
-quick:  ## tiny threshold sweep into results/quick/ (smoke test, ~5 s)
+install:  ## build the C++ core and install the backlog Python package (use a virtualenv)
+	$(PY) -m pip install ".[test]"
+
+cpp:  ## build the C++ command-line decoder and the C++ test suite
+	cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+	cmake --build cpp/build -j
+
+test: test-cpp test-py test-cli  ## all tests except the slow sweeps (run make install first)
+
+test-cpp: cpp  ## C++ unit tests + 75,000 fuzzed cases, fast decoder == reference decoder
+	cd cpp/build && ctest --output-on-failure
+
+test-py:  ## pytest: accuracy gates against PyMatching, sinter integration
+	$(PY) -m pytest -q
+
+test-cli: cpp  ## command-line decoder on graphs exported from Stim, gated against PyMatching
+	./scripts/run_tests.sh
+
+mutants:  ## mutation testing: every injected bug must make the test suite fail (~1 min)
+	$(PY) scripts/mutation_test.py
+
+quick:  ## tiny PyMatching threshold sweep into results/quick/ (smoke test, seconds)
 	cd python && $(PY) baseline_threshold.py --quick && $(PY) plot_threshold.py --results-dir ../results/quick
 
-baseline:  ## full Stim + PyMatching threshold sweep (a few minutes)
+baseline:  ## PyMatching-only threshold sweep (a few minutes), see results/threshold.png
 	cd python && $(PY) baseline_threshold.py --max-shots 300000 --max-errors 1000
 
 plot:  ## redraw results/threshold.png from results/threshold_data.csv
 	cd python && $(PY) plot_threshold.py
 
-cpp:  ## build the C++ Union-Find decoder
-	cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
-	cmake --build cpp/build -j
+compare:  ## sinter sweep, PyMatching vs weighted and unweighted UF (long, resumable)
+	cd python && $(PY) threshold_comparison.py collect && $(PY) threshold_comparison.py plot
 
-test: cpp  ## C++ decoder: syndrome invariant + accuracy vs PyMatching
-	./scripts/run_tests.sh
+plots:  ## redraw the comparison figures from results/threshold_comparison.csv
+	cd python && $(PY) threshold_comparison.py plot
 
-bench: cpp  ## C++ UF vs PyMatching on the surface code, writes results/uf_vs_pymatching.*
-	cd python && $(PY) uf_vs_pymatching.py
+latency:  ## decoding time vs PyMatching, d = 3 to 13 (run on an idle machine)
+	cd python && $(PY) latency_benchmark.py
 
 hw:  ## VHDL: bit-exact simulation, synthesis, place and route
 	./hardware/run_hw.sh
@@ -33,7 +54,7 @@ hw:  ## VHDL: bit-exact simulation, synthesis, place and route
 hw-sim:  ## VHDL: simulation only
 	./hardware/run_hw.sh sim
 
-all: quick test hw-sim  ## everything CI runs
+all: test mutants quick hw-sim  ## everything CI runs
 
 clean:  ## remove build outputs
-	rm -rf cpp/build hardware/build cpp/testdata* results/quick
+	rm -rf cpp/build hardware/build cpp/testdata* results/quick build _skbuild

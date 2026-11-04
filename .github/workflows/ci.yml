@@ -20,11 +20,23 @@ jobs:
       - name: Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Build and install the package (C++ core, pybind11 bindings)
+        run: make install
+
+      - name: C++ unit tests, 75,000 fuzzed cases against the reference decoder
+        run: make test-cpp
+
+      - name: Python tests (accuracy gates against PyMatching, sinter integration)
+        run: make test-py
+
+      - name: Command-line decoder on graphs exported from Stim
+        run: make test-cli
+
+      - name: Mutation testing (every injected bug must be caught)
+        run: make mutants
+
       - name: Threshold pipeline smoke test (Stim + PyMatching)
         run: make quick
-
-      - name: C++ decoder tests (syndrome invariant + accuracy gate)
-        run: make test
 
       - name: VHDL simulation, bit-exact against the golden model
         run: make hw-sim

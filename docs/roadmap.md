@@ -9,23 +9,33 @@ in the README, reproducible with one `make` target, and covered by CI.
 - PyMatching threshold sweep with sinter: `make baseline`, `make plot`
 - Result: threshold about 0.73% (crossing of d = 5 and d = 7)
 
-## Phase 2: C++ Union-Find decoder (v0 done)
+## Phase 2: C++ Union-Find decoder (v0.2 done)
 
 Done:
-- Union-Find growth + peeling, dependency free, reads graphs exported from Stim
-- Hard invariant (correction reproduces syndrome): 100% on repetition and
-  surface code d = 3, 5, 7
-- Accuracy and latency benchmarked against PyMatching: `make bench`
+- [x] Union-Find growth + peeling, dependency free, CLI on plain-text graphs
+- [x] Hard invariant (correction reproduces syndrome), checked on every decode
+- [x] Weighted growth from the detector error model: the d = 7 / 9 crossing
+      goes from 0.66% to 0.77% (PyMatching 0.75%), logical error rate within
+      0 to 20% of PyMatching up to d = 9
+- [x] Event-driven growth (node radii, bucket queue, per-cluster lists)
+      instead of scanning every edge each round: speed parity with
+      PyMatching 2 on one core, d = 3 to 13
+- [x] Reference decoder + fuzzing: fast and reference corrections identical
+      on 75,000 random cases
+- [x] Mutation testing: 10 injected bugs, all caught (`make mutants`)
+- [x] Python package (pybind11, `pip install .`) and sinter custom decoder
+      (`backlog-uf`), sinter command line included
 
 Next:
-- [ ] Weighted growth from the detector error model weights (closes most of
-      the gap to MWPM under circuit-level noise)
-- [ ] Per-cluster boundary lists instead of scanning every edge each round
-- [ ] Streaming mode: decode a window of rounds, commit, slide; report
-      p50/p99 tail latency, the metric NVIDIA uses for real-time decoders
-- [ ] Plug into sinter as a custom decoder to get UF threshold curves directly
-- [ ] Property-based fuzzing: random graphs + random syndromes, invariant and
-      differential checks against PyMatching
+- [ ] Streaming mode: decode a window of rounds, commit the oldest ones,
+      slide. Report p50/p99/p99.9 latency per committed round, the metric
+      that decides whether a decoder keeps up with a 1 µs cycle
+- [ ] Check that windowed decoding matches whole-shot accuracy once the
+      buffer is at least d rounds
+- [ ] Parallel windows (decode independent windows on several cores, then
+      stitch), the CPU answer to the backlog problem
+- [ ] Faster than PyMatching 2 at p = 0.3%: profile shows no single hotspot,
+      so this needs an algorithmic change, not tuning
 
 ## Phase 3: hardware (1D done)
 
@@ -36,6 +46,7 @@ Done:
 
 Next:
 - [ ] Parallel segmented prefix scan, O(log N) depth per round
+- [ ] Weighted growth in hardware (integer lengths, as in the C++ decoder)
 - [ ] 2D surface code core (d = 3, then 5) with the time dimension, vectors
       from Stim through the C++ decoder as golden model
 - [ ] Synthesize in Vivado (free edition) for an Artix-7 to get 7-series timing
@@ -44,7 +55,7 @@ Next:
 ## Phase 4: showcase
 
 - [ ] Web demo: inject errors on a surface code, watch clusters grow
-      (C++ compiled to WebAssembly, React front end)
+      (C++ compiled to WebAssembly)
 - [ ] Write-up: what building a real-time decoder from scratch taught me,
       with the honest limitations
 - [ ] One upstream contribution (Stim, PyMatching or Deltakit), even small
@@ -55,5 +66,7 @@ Next:
 - [x] A latency table (CPU, and ns per cycle after place and route)
 - [x] Tests that prove correctness, not just that code runs
 - [x] An honest limitations section
-- [ ] The CV line: "Real-time QEC decoder (C++ and VHDL), N ns per round at
-      d = 5, validated against PyMatching on Stim circuit-level noise"
+- [x] The CV line: "Weighted Union-Find QEC decoder in C++ (pip, sinter):
+      threshold matches PyMatching within error bars, single-core speed on
+      par with PyMatching 2, bit-exact against a reference on 75,000 fuzzed
+      cases; 1D VHDL core placed and routed at 94.5 MHz"
