@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: System tools (C++ toolchain, VHDL simulator)
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ ghdl
+
+      - name: Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Threshold pipeline smoke test (Stim + PyMatching)
+        run: make quick
+
+      - name: C++ decoder tests (syndrome invariant + accuracy gate)
+        run: make test
+
+      - name: VHDL simulation, bit-exact against the golden model
+        run: make hw-sim
