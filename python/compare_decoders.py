@@ -1,16 +1,15 @@
-"""Compare the C++ Union-Find decoder against PyMatching on the same shots.
+"""Compare the C++ command-line decoder against PyMatching on the same shots.
 
-Two things matter here, and they are different questions:
+Reads the files written by export_decoding_graph.py (graph, shots, PyMatching's
+predictions) and by backlog_decode (preds_cpp.txt), then reports:
 
-1. Logical error rate. UF (unweighted) is expected to be slightly worse than
-   or equal to PyMatching (weighted MWPM). We just want them in the same ball-
-   park, confirming the C++ decoder is actually decoding and not guessing.
+1. Logical error rate of both decoders. Weighted Union-Find is expected close
+   to PyMatching (MWPM); the check fails above --max-ratio times PyMatching.
+2. Agreement rate: how often both predict the same observables. Different
+   algorithms, so less than 100% is normal.
 
-2. Agreement rate. How often the two decoders predict the same observable.
-   They are different algorithms, so <100% is normal and fine.
-
-The hard correctness guarantee (every correction reproduces its syndrome) is
-checked inside the C++ binary itself and printed there.
+The hard guarantee (every correction reproduces its syndrome) is checked
+inside the C++ binary itself, which exits non-zero if it ever fails.
 """
 from __future__ import annotations
 
@@ -36,8 +35,13 @@ def load_bits(path: Path) -> np.ndarray:
 
 
 def main():
-    import sys
-    base = Path(sys.argv[1]) if len(sys.argv) > 1 else TESTDATA
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("testdata", nargs="?", default=str(TESTDATA))
+    ap.add_argument("--max-ratio", type=float, default=1.5,
+                    help="fail if UF's logical error rate exceeds this times PyMatching's")
+    args = ap.parse_args()
+    base = Path(args.testdata)
     actual = load_bits(base / "obs_actual.txt")
     pm = load_bits(base / "preds_pymatching.txt")
     cpp_path = base / "preds_cpp.txt"
@@ -58,11 +62,10 @@ def main():
     print(f"C++ Union-Find logical err:{cpp_ler:.4e}")
     print(f"decoder agreement:         {agree*100:.2f}%")
     ratio = cpp_ler / pm_ler if pm_ler else float("inf")
-    print(f"UF / MWPM ratio:           {ratio:.3f}  (>=1 expected)")
+    print(f"UF / MWPM ratio:           {ratio:.3f}  (gate: {args.max_ratio})")
 
-    # Sanity gate for CI: UF should not be wildly worse than MWPM.
-    if pm_ler > 0 and ratio > 2.0:
-        raise SystemExit("FAIL: UF logical error rate is more than 2x MWPM.")
+    if pm_ler > 0 and ratio > args.max_ratio:
+        raise SystemExit(f"FAIL: UF logical error rate is more than {args.max_ratio}x MWPM.")
     print("OK")
 
 

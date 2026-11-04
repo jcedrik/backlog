@@ -1,16 +1,12 @@
-"""Export a decoding graph + sampled shots so the C++ decoder can be tested.
+"""Export a decoding graph + sampled shots for the C++ command-line decoder.
 
-The C++ Union-Find decoder does not depend on Stim or PyMatching. Instead, this
-script freezes everything it needs into plain text files:
+The C++ CLI does not depend on Stim. This script freezes what it needs into
+plain text files, using the same DEM conversion as the Python package:
 
-  graph.txt            the decoding graph (nodes, boundary, edges, obs masks)
+  graph.txt            "N M" header, then one edge per line: "a b obs p"
   dets.txt             detection events, one shot per line (fired detector ids)
-  obs_actual.txt       ground-truth observable flips from Stim (the truth)
-  preds_pymatching.txt PyMatching's predictions on the same shots (the baseline)
-
-The C++ side reads graph.txt + dets.txt, writes preds_cpp.txt, and we compare.
-We default to the repetition code because it is graphlike and unweighted-
-friendly, which is the honest first target for a from-scratch UF decoder.
+  obs_actual.txt       ground-truth observable flips from Stim
+  preds_pymatching.txt PyMatching's predictions on the same shots
 """
 from __future__ import annotations
 
@@ -19,60 +15,22 @@ from pathlib import Path
 
 import numpy as np
 import pymatching
-import stim
 
+import backlog
 from generate_circuits import repetition_code_circuit, surface_code_circuit
 
 
-def dem_to_graph(dem: stim.DetectorErrorModel):
-    """Flatten a decomposed DEM into graphlike edges.
-
-    Returns (num_detectors, num_observables, edges) where edges maps
-    (a, b) -> observable bitmask and b == num_detectors means the boundary.
-    Non-graphlike components (>2 detectors) are skipped and counted.
-    """
-    n = dem.num_detectors
-    m = dem.num_observables
-    boundary = n
-    edges: dict[tuple[int, int], int] = {}
-    skipped = 0
-
-    for inst in dem.flattened():
-        if inst.type != "error":
-            continue
-        components = [[[], 0]]  # list of [detector_ids, obs_mask]
-        for t in inst.targets_copy():
-            if t.is_separator():
-                components.append([[], 0])
-            elif t.is_relative_detector_id():
-                components[-1][0].append(t.val)
-            elif t.is_logical_observable_id():
-                components[-1][1] |= (1 << t.val)
-        for dets, obs in components:
-            if len(dets) == 1:
-                a, b = dets[0], boundary
-            elif len(dets) == 2:
-                a, b = dets[0], dets[1]
-            else:
-                skipped += 1
-                continue
-            key = (min(a, b), max(a, b))
-            edges.setdefault(key, obs)
-    return n, m, edges, skipped
-
-
-def write_graph(path: Path, n: int, m: int, edges: dict):
+def write_graph(path: Path, edges: backlog.GraphEdges):
     with path.open("w") as f:
-        f.write(f"{n} {m}\n")
-        for (a, b), obs in sorted(edges.items()):
-            f.write(f"{a} {b} {obs}\n")
+        f.write(f"{edges.num_detectors} {edges.num_observables}\n")
+        for a, b, o, p in zip(edges.a, edges.b, edges.obs, edges.p):
+            f.write(f"{a} {b} {o} {p:.17g}\n")
 
 
 def write_rows_of_indices(path: Path, bool_matrix: np.ndarray):
     with path.open("w") as f:
         for row in bool_matrix:
-            idx = np.nonzero(row)[0]
-            f.write(" ".join(map(str, idx.tolist())) + "\n")
+            f.write(" ".join(map(str, np.flatnonzero(row).tolist())) + "\n")
 
 
 def write_rows_of_bits(path: Path, bool_matrix: np.ndarray):
@@ -83,12 +41,12 @@ def write_rows_of_bits(path: Path, bool_matrix: np.ndarray):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--code", default="repetition",
-                    choices=["repetition", "surface"])
+    ap.add_argument("--code", default="repetition", choices=["repetition", "surface"])
     ap.add_argument("--distance", type=int, default=5)
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--p", type=float, default=0.03)
     ap.add_argument("--shots", type=int, default=20_000)
+    ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -102,14 +60,12 @@ def main():
         circuit = surface_code_circuit(args.distance, args.rounds, args.p)
 
     dem = circuit.detector_error_model(decompose_errors=True)
-    n, m, edges, skipped = dem_to_graph(dem)
-    write_graph(out / "graph.txt", n, m, edges)
+    edges = backlog.dem_to_edges(dem)
+    write_graph(out / "graph.txt", edges)
 
-    sampler = circuit.compile_detector_sampler()
-    dets, obs = sampler.sample(args.shots, separate_observables=True)
-
-    matching = pymatching.Matching.from_detector_error_model(dem)
-    preds = matching.decode_batch(dets).astype(bool)
+    dets, obs = circuit.compile_detector_sampler(seed=args.seed).sample(
+        args.shots, separate_observables=True)
+    preds = pymatching.Matching.from_detector_error_model(dem).decode_batch(dets).astype(bool)
 
     write_rows_of_indices(out / "dets.txt", dets)
     write_rows_of_bits(out / "obs_actual.txt", obs)
@@ -117,8 +73,8 @@ def main():
 
     pm_ler = float(np.mean(np.any(preds != obs, axis=1)))
     print(f"code={args.code} d={args.distance} rounds={args.rounds} p={args.p}")
-    print(f"  detectors={n} observables={m} edges={len(edges)} "
-          f"skipped_hyperedges={skipped}")
+    print(f"  detectors={edges.num_detectors} observables={edges.num_observables} "
+          f"edges={edges.num_edges} skipped_hyperedges={edges.skipped_hyperedges}")
     print(f"  shots={args.shots}  PyMatching logical error rate={pm_ler:.4e}")
     print(f"  wrote test data to {out}")
 
