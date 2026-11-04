@@ -87,3 +87,25 @@ def dem_to_edges(dem: stim.DetectorErrorModel) -> GraphEdges:
     obs_arr = np.array([merged[k][0] for k in keys], dtype=np.uint64)
     p_arr = np.array([merged[k][1] for k in keys], dtype=np.float64)
     return GraphEdges(n, m, a, b, obs_arr, p_arr, skipped, conflicts)
+
+
+def detector_layers(dem: stim.DetectorErrorModel) -> np.ndarray:
+    """Time layer of each detector, from the last coordinate of its DETECTOR.
+
+    Stim's generated circuits give every detector coordinates (x, y, t), where
+    t counts rounds. Layers are shifted to start at 0. The sliding-window
+    decoder needs detectors numbered in time order, which Stim circuits do.
+    """
+    coords = dem.get_detector_coordinates()
+    n = dem.num_detectors
+    layers = np.empty(n, dtype=np.int64)
+    for d in range(n):
+        c = coords.get(d)
+        if not c:
+            raise ValueError(f"detector {d} has no coordinates: pass layers explicitly")
+        layers[d] = int(round(c[-1]))
+    if n:
+        layers -= layers.min()
+        if np.any(np.diff(layers) < 0):
+            raise ValueError("detector layers must be non-decreasing with the detector id")
+    return layers.astype(np.int32)

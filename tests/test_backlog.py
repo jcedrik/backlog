@@ -10,9 +10,9 @@ import stim
 import backlog
 
 
-def surface(d: int, p: float) -> stim.Circuit:
+def surface(d: int, p: float, rounds: int | None = None) -> stim.Circuit:
     return stim.Circuit.generated(
-        "surface_code:rotated_memory_z", distance=d, rounds=d,
+        "surface_code:rotated_memory_z", distance=d, rounds=rounds or d,
         after_clifford_depolarization=p, after_reset_flip_probability=p,
         before_measure_flip_probability=p, before_round_data_depolarization=p)
 
@@ -106,3 +106,68 @@ def test_sinter_integration():
     assert len(stats) == 1
     assert stats[0].shots == 2_000
     assert 0 < stats[0].errors < 200
+
+
+# ---------------------------------------------------------------- windows
+
+
+def test_detector_layers_follow_rounds():
+    dem = surface(3, 0.005, rounds=4).detector_error_model(decompose_errors=True)
+    layers = backlog.detector_layers(dem)
+    assert layers.min() == 0 and layers.max() == 4
+    assert np.all(np.diff(layers) >= 0)
+    assert np.bincount(layers).tolist() == [4, 8, 8, 8, 4]
+
+
+def test_one_window_is_exactly_the_whole_shot_decoder():
+    circuit = surface(5, 0.005)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, _ = sample(circuit, 5_000, seed=3)
+    whole = backlog.UnionFindDecoder.from_dem(dem)
+    window = backlog.SlidingWindowDecoder.from_dem(dem, commit=6, buffer=0)
+    assert window.num_windows == 1
+    np.testing.assert_array_equal(window.decode_batch(dets), whole.decode_batch(dets))
+    for shot in dets[:50]:
+        a, b = window.decode_detailed(shot), whole.decode_detailed(shot)
+        np.testing.assert_array_equal(a.correction, b.correction)
+
+
+def test_windowed_corrections_reproduce_syndromes():
+    circuit = surface(5, 0.008, rounds=20)
+    dets, _ = sample(circuit, 300, seed=5)
+    window = backlog.SlidingWindowDecoder.from_circuit(circuit, commit=3, buffer=2)
+    assert window.num_windows > 5
+    assert window.num_shapes <= 4  # the periodic bulk shares one decoder
+    for shot in dets:
+        assert window.decode_detailed(shot).syndrome_ok
+    np.testing.assert_array_equal(
+        window.decode_batch(dets[:50]), np.array([window.decode(s) for s in dets[:50]]))
+    packed = np.packbits(dets.astype(np.uint8), axis=1, bitorder="little")
+    assert window.window_latency_ns(packed).shape == (300, window.num_windows)
+
+
+def test_buffer_of_d_rounds_matches_whole_shot_accuracy():
+    # Same shots for every decoder, fixed seed: the comparison is paired.
+    d = 5
+    circuit = surface(d, 0.005, rounds=5 * d)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, obs = sample(circuit, 20_000, seed=11)
+
+    def errors(decoder):
+        return int(np.sum(np.any(decoder.decode_batch(dets) != obs, axis=1)))
+
+    whole = errors(backlog.UnionFindDecoder.from_dem(dem))
+    buffered = errors(backlog.SlidingWindowDecoder.from_dem(dem, commit=d, buffer=d))
+    no_buffer = errors(backlog.SlidingWindowDecoder.from_dem(dem, commit=d, buffer=0))
+    assert buffered <= 1.05 * whole
+    assert no_buffer > 1.3 * buffered
+
+
+def test_sinter_window_decoder():
+    task = sinter.Task(circuit=surface(3, 0.005, rounds=9), json_metadata={"d": 3})
+    stats = sinter.collect(
+        num_workers=1, tasks=[task], decoders=["uf-window"],
+        custom_decoders={"uf-window": backlog.SinterSlidingWindowDecoder(commit=3, buffer=3)},
+        max_shots=2_000, max_errors=500)
+    assert stats[0].shots == 2_000
+    assert 0 < stats[0].errors < 400

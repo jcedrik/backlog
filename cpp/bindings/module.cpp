@@ -8,12 +8,14 @@
 #include <vector>
 
 #include "backlog/decoder.hpp"
+#include "backlog/window.hpp"
 
 namespace py = pybind11;
 using backlog::DecodeResult;
 using backlog::DecodingGraph;
 using backlog::Edge;
 using backlog::ReferenceDecoder;
+using backlog::SlidingWindowDecoder;
 using backlog::UnionFindDecoder;
 using backlog::Weighting;
 
@@ -132,6 +134,84 @@ PYBIND11_MODULE(_core, mod) {
                      lat = d.latency_ns(in, shots, stride);
                  }
                  return py::array_t<double>(static_cast<py::ssize_t>(lat.size()), lat.data());
+             },
+             py::arg("bit_packed_detection_events"));
+
+    py::class_<SlidingWindowDecoder>(mod, "SlidingWindowDecoder")
+        .def(py::init([](int32_t n, int32_t m, const I32& a, const I32& b,
+                         const U64& obs, const F64& p, const I32& layers,
+                         int32_t commit, int32_t buffer, bool weighted,
+                         int32_t resolution) {
+                 if (layers.size() != n) {
+                     throw std::invalid_argument("need one layer per detector");
+                 }
+                 std::vector<int32_t> layer(layers.data(), layers.data() + layers.size());
+                 return std::make_unique<SlidingWindowDecoder>(
+                     make_graph(n, m, a, b, obs, p, weighted, resolution),
+                     std::move(layer), commit, buffer);
+             }),
+             py::arg("num_detectors"), py::arg("num_observables"), py::arg("a"),
+             py::arg("b"), py::arg("obs"), py::arg("p"), py::arg("layers"),
+             py::arg("commit"), py::arg("buffer"), py::arg("weighted") = true,
+             py::arg("resolution") = 1024)
+        .def_property_readonly("num_detectors",
+                               [](const SlidingWindowDecoder& d) { return d.graph().num_detectors(); })
+        .def_property_readonly("num_observables",
+                               [](const SlidingWindowDecoder& d) { return d.graph().num_observables(); })
+        .def_property_readonly("num_layers", &SlidingWindowDecoder::num_layers)
+        .def_property_readonly("num_windows", &SlidingWindowDecoder::num_windows)
+        .def_property_readonly("num_shapes", &SlidingWindowDecoder::num_shapes)
+        .def_property_readonly("windows",
+                               [](const SlidingWindowDecoder& d) {
+                                   py::list out;
+                                   for (const auto& w : d.windows()) {
+                                       out.append(py::make_tuple(w.first_layer, w.commit_end,
+                                                                 w.end_layer));
+                                   }
+                                   return out;
+                               })
+        .def("decode_ids",
+             [](SlidingWindowDecoder& d, const std::vector<int32_t>& fired) {
+                 return d.decode(fired);
+             },
+             py::arg("fired"))
+        .def("decode_detailed_ids",
+             [](SlidingWindowDecoder& d, const std::vector<int32_t>& fired) {
+                 return to_tuple(d.decode_detailed(fired));
+             },
+             py::arg("fired"))
+        .def("decode_batch_bit_packed",
+             [](SlidingWindowDecoder& d, const U8& dets) {
+                 check_packed(dets, d.graph().num_detectors());
+                 const py::ssize_t shots = dets.shape(0);
+                 const py::ssize_t obs_bytes = (d.graph().num_observables() + 7) / 8;
+                 py::array_t<uint8_t> out({shots, obs_bytes});
+                 const uint8_t* in = dets.data();
+                 uint8_t* dst = out.mutable_data();
+                 const std::size_t stride = static_cast<std::size_t>(dets.shape(1));
+                 {
+                     py::gil_scoped_release release;
+                     d.decode_batch_bit_packed(in, static_cast<std::size_t>(shots), stride,
+                                               dst, static_cast<std::size_t>(obs_bytes));
+                 }
+                 return out;
+             },
+             py::arg("bit_packed_detection_events"))
+        .def("window_latency_ns",
+             [](SlidingWindowDecoder& d, const U8& dets) {
+                 check_packed(dets, d.graph().num_detectors());
+                 const uint8_t* in = dets.data();
+                 const std::size_t shots = static_cast<std::size_t>(dets.shape(0));
+                 const std::size_t stride = static_cast<std::size_t>(dets.shape(1));
+                 std::vector<double> lat;
+                 {
+                     py::gil_scoped_release release;
+                     lat = d.window_latency_ns(in, shots, stride);
+                 }
+                 py::array_t<double> out({static_cast<py::ssize_t>(shots),
+                                          static_cast<py::ssize_t>(d.num_windows())});
+                 std::copy(lat.begin(), lat.end(), out.mutable_data());
+                 return out;
              },
              py::arg("bit_packed_detection_events"));
 
