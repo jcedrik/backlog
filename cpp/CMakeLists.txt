@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-option(BACKLOG_BUILD_TOOLS "Build the command-line decoder" ON)
+option(BACKLOG_BUILD_TOOLS "Build the CLI and the C++ test suite" ON)
 
 add_library(backlog_core STATIC
   src/graph.cpp
@@ -23,4 +23,10 @@ endif()
 if(BACKLOG_BUILD_TOOLS)
   add_executable(backlog_decode src/main.cpp)
   target_link_libraries(backlog_decode PRIVATE backlog_core)
+
+  add_executable(backlog_tests tests/test_decoder.cpp)
+  target_link_libraries(backlog_tests PRIVATE backlog_core)
+
+  enable_testing()
+  add_test(NAME decoder_tests COMMAND backlog_tests)
 endif()
