@@ -75,6 +75,12 @@ public:
     uint64_t decode(const std::vector<int32_t>& fired) {
         return decode(fired.data(), fired.size());
     }
+    // Same, and writes the chosen edge ids (peeling order) to `correction`.
+    uint64_t decode(const int32_t* fired, std::size_t count,
+                    std::vector<int32_t>& correction) {
+        correction.clear();
+        return run(fired, count, &correction);
+    }
     DecodeResult decode_detailed(const std::vector<int32_t>& fired);
 
     // Batch decoding on Stim's bit-packed layout. det_stride and obs_stride

@@ -20,6 +20,7 @@ add_library(backlog_core STATIC
   src/graph.cpp
   src/decoder.cpp
   src/reference.cpp
+  src/window.cpp
 )
 target_include_directories(backlog_core PUBLIC include)
 if(NOT MSVC)

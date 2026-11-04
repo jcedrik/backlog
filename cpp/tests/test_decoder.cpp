@@ -5,6 +5,10 @@
 // by the reference decoder. They must agree exactly: same observable flips and
 // the same correction, edge for edge, in the same order. The same fast decoder
 // object is reused across shots, which also exercises its lazy state reset.
+//
+// The sliding-window decoder gets its own fuzzer on random layered graphs:
+// every committed correction must reproduce the syndrome, and a single window
+// covering every layer must give exactly the whole-shot answer.
 #include <algorithm>
 #include <cstdio>
 #include <random>
@@ -14,6 +18,7 @@
 #include <vector>
 
 #include "backlog/decoder.hpp"
+#include "backlog/window.hpp"
 
 using namespace backlog;
 
@@ -131,7 +136,9 @@ void test_batch_matches_single_shots() {
     CHECK(lat.size() == shots.size());
 }
 
-DecodingGraph random_graph(std::mt19937_64& rng, bool uniform) {
+// Parallel edges are allowed on request: sliding windows create them (several
+// edges into the future all become edges to the boundary).
+DecodingGraph random_graph(std::mt19937_64& rng, bool uniform, bool parallel) {
     const int32_t n = 1 + static_cast<int32_t>(rng() % 40);
     const int32_t m = 1 + static_cast<int32_t>(rng() % 3);
     const std::size_t target = static_cast<std::size_t>(n) + rng() % (2 * n + 1);
@@ -142,7 +149,7 @@ DecodingGraph random_graph(std::mt19937_64& rng, bool uniform) {
         const int32_t b = (rng() % 4 == 0) ? n : static_cast<int32_t>(rng() % n);
         if (a == b) continue;
         const auto key = std::minmax(a, b);
-        if (!used.insert(key).second) continue;
+        if (!used.insert(key).second && !parallel) continue;
         edges.push_back(edge(a, b, rng() & ((1ull << m) - 1)));
     }
     std::vector<int32_t> weights(edges.size(), 2);
@@ -157,7 +164,8 @@ void test_fuzz_fast_equals_reference(int num_graphs, int shots_per_graph) {
     long long cases = 0, mismatches = 0;
     for (int gi = 0; gi < num_graphs; ++gi) {
         const bool uniform = (gi % 3 == 0);
-        DecodingGraph g = random_graph(rng, uniform);
+        const bool parallel = (gi % 4 == 1);
+        DecodingGraph g = random_graph(rng, uniform, parallel);
         UnionFindDecoder fast(g);  // reused across all shots below
         ReferenceDecoder ref(g);
         std::uniform_real_distribution<double> unit(0.0, 1.0);
@@ -194,6 +202,169 @@ void test_fuzz_fast_equals_reference(int num_graphs, int shots_per_graph) {
                 cases, mismatches);
 }
 
+// Random layered graph: each layer is a tree hooked to the boundary, every
+// detector reaches the next layer, and some edges skip a layer. Every window
+// of whole layers can explain any syndrome, so the invariant must always hold.
+struct LayeredGraph {
+    DecodingGraph graph;
+    std::vector<int32_t> layer;
+};
+
+LayeredGraph random_layered_graph(std::mt19937_64& rng, bool periodic) {
+    auto pick = [&rng](int32_t lo, int32_t hi) {  // inclusive
+        return lo + static_cast<int32_t>(rng() % static_cast<uint64_t>(hi - lo + 1));
+    };
+    const int32_t L = periodic ? 20 : pick(1, 8);
+    const int32_t m = pick(1, 3);
+    const int32_t per_layer = pick(1, 5);
+    std::vector<int32_t> layer, begin;
+    for (int32_t t = 0; t < L; ++t) {
+        begin.push_back(static_cast<int32_t>(layer.size()));
+        const int32_t k = periodic ? per_layer : pick(1, 5);
+        for (int32_t i = 0; i < k; ++i) layer.push_back(t);
+    }
+    begin.push_back(static_cast<int32_t>(layer.size()));
+    const int32_t n = static_cast<int32_t>(layer.size());
+
+    // In periodic mode every layer reuses the same random choices.
+    std::mt19937_64 layer_rng = rng;
+    std::vector<Edge> edges;
+    std::vector<int32_t> weights;
+    for (int32_t t = 0; t < L; ++t) {
+        std::mt19937_64& r = periodic ? layer_rng : rng;
+        if (periodic) r.seed(12345);
+        auto rpick = [&r](int32_t lo, int32_t hi) {
+            return lo + static_cast<int32_t>(r() % static_cast<uint64_t>(hi - lo + 1));
+        };
+        auto add = [&](int32_t a, int32_t b) {
+            if (b != n && (r() & 1)) std::swap(a, b);  // either orientation
+            edges.push_back(edge(a, b, r() & ((1ull << m) - 1)));
+            weights.push_back(rpick(1, 9));
+        };
+        const int32_t lo = begin[t], hi = begin[t + 1];
+        for (int32_t v = lo + 1; v < hi; ++v) add(rpick(lo, v - 1), v);
+        add(rpick(lo, hi - 1), n);
+        for (int32_t v = lo; v < hi; ++v) {
+            if (r() % 2) add(v, n);
+            if (t + 1 < L) {
+                add(v, rpick(begin[t + 1], begin[t + 2] - 1));
+                if (r() % 2) add(v, rpick(begin[t + 1], begin[t + 2] - 1));
+            }
+            if (t + 2 < L && r() % 7 == 0) add(v, rpick(begin[t + 2], begin[t + 3] - 1));
+        }
+    }
+    return {DecodingGraph(n, m, std::move(edges), std::move(weights)), std::move(layer)};
+}
+
+// Two layers, one detector each: D0 (layer 0) and D1 (layer 1).
+//   edge 0: D0 - D1  weight 1, obs 1   (a likely error between two rounds)
+//   edge 1: D0 - B   weight 9
+//   edge 2: D1 - B   weight 9
+// With a window of one layer and no buffer, D0 cannot see D1, but its edge to
+// the future acts as a boundary edge: the cheap explanation is still found,
+// committed, and its far end is carried into the next window.
+void test_window_matches_across_the_window_top() {
+    const std::vector<Edge> edges = {edge(0, 1, 1), edge(0, 2), edge(1, 2)};
+    DecodingGraph g(2, 1, edges, std::vector<int32_t>{1, 9, 9});
+    SlidingWindowDecoder win(g, {0, 1}, 1, 0);
+    CHECK(win.num_windows() == 2);
+    const DecodeResult r = win.decode_detailed({0, 1});
+    CHECK(r.correction == std::vector<int32_t>{0});
+    CHECK(r.observables == 1);
+    CHECK(r.syndrome_ok);
+    const DecodeResult only_first = win.decode_detailed({0});  // D1 quiet
+    CHECK(only_first.syndrome_ok);
+}
+
+void test_window_shapes_are_shared() {
+    std::mt19937_64 rng(7);
+    LayeredGraph lg = random_layered_graph(rng, /*periodic=*/true);
+    SlidingWindowDecoder win(lg.graph, lg.layer, 2, 2);
+    // 20 layers, commit 2, buffer 2: windows start at 0, 2, ..., 16.
+    CHECK(win.num_layers() == 20);
+    CHECK(win.num_windows() == 9);
+    CHECK(win.windows().back().end_layer == 20);
+    CHECK(win.windows().back().commit_end == 20);
+    CHECK(win.windows()[3].commit_end == 8);
+    CHECK(win.windows()[3].end_layer == 10);
+    CHECK(win.num_shapes() <= 3);  // bulk windows share one decoder
+
+    bool threw = false;
+    try {
+        SlidingWindowDecoder bad(lg.graph, std::vector<int32_t>(lg.layer.rbegin(), lg.layer.rend()), 2, 2);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK(threw);  // layers must follow detector order
+}
+
+void test_window_fuzz(int num_graphs, int shots_per_graph) {
+    std::mt19937_64 rng(20261105);
+    long long cases = 0, invalid = 0, inconsistent = 0, differ = 0;
+    for (int gi = 0; gi < num_graphs; ++gi) {
+        LayeredGraph lg = random_layered_graph(rng, gi % 10 == 0);
+        const DecodingGraph& g = lg.graph;
+        const int32_t L = lg.layer.back() + 1;
+        const int32_t C = 1 + static_cast<int32_t>(rng() % 3);
+        const int32_t B = static_cast<int32_t>(rng() % 4);
+        SlidingWindowDecoder win(g, lg.layer, C, B);
+        SlidingWindowDecoder single(g, lg.layer, L, static_cast<int32_t>(rng() % 3));
+        UnionFindDecoder whole(g);
+        CHECK(single.num_windows() == 1);
+        std::uniform_real_distribution<double> unit(0.0, 1.0);
+        const double q = 0.05 + 0.45 * unit(rng);
+        for (int s = 0; s < shots_per_graph; ++s) {
+            std::vector<int32_t> fired;
+            for (int32_t v = 0; v < g.num_detectors(); ++v) {
+                if (unit(rng) < q) fired.push_back(v);
+            }
+            ++cases;
+            const DecodeResult r = win.decode_detailed(fired);
+            uint64_t x = 0;
+            for (int32_t e : r.correction) x ^= g.edge(e).obs;
+            if (!r.syndrome_ok) ++invalid;
+            if (x != r.observables || win.decode(fired) != r.observables) ++inconsistent;
+
+            // One window covering everything is exactly the whole-shot decoder.
+            const DecodeResult a = single.decode_detailed(fired);
+            const DecodeResult b = whole.decode_detailed(fired);
+            if (a.correction != b.correction || a.observables != b.observables) ++differ;
+        }
+    }
+    std::printf("windows: %lld random cases, %lld invalid corrections, %lld inconsistent, "
+                "%lld differences with whole-shot decoding\n",
+                cases, invalid, inconsistent, differ);
+    CHECK(invalid == 0);
+    CHECK(inconsistent == 0);
+    CHECK(differ == 0);
+}
+
+void test_window_batch_matches_single_shots() {
+    std::mt19937_64 rng(99);
+    LayeredGraph lg = random_layered_graph(rng, /*periodic=*/true);
+    SlidingWindowDecoder win(lg.graph, lg.layer, 3, 2);
+    const int32_t n = lg.graph.num_detectors();
+    const std::size_t stride = (static_cast<std::size_t>(n) + 7) / 8;
+    const std::size_t shots = 64;
+    std::vector<uint8_t> packed(shots * stride, 0);
+    std::vector<std::vector<int32_t>> fired(shots);
+    for (std::size_t s = 0; s < shots; ++s) {
+        for (int32_t v = 0; v < n; ++v) {
+            if (rng() % 5 == 0) {
+                fired[s].push_back(v);
+                packed[s * stride + v / 8] |= static_cast<uint8_t>(1u << (v % 8));
+            }
+        }
+    }
+    std::vector<uint8_t> out(shots, 0xFF);
+    win.decode_batch_bit_packed(packed.data(), shots, stride, out.data(), 1);
+    for (std::size_t s = 0; s < shots; ++s) {
+        CHECK(out[s] == static_cast<uint8_t>(win.decode(fired[s])));
+    }
+    const std::vector<double> lat = win.window_latency_ns(packed.data(), shots, stride);
+    CHECK(lat.size() == shots * static_cast<std::size_t>(win.num_windows()));
+}
+
 }  // namespace
 
 int main() {
@@ -203,6 +374,10 @@ int main() {
     test_unexplainable_syndrome();
     test_batch_matches_single_shots();
     test_fuzz_fast_equals_reference(3000, 25);
+    test_window_matches_across_the_window_top();
+    test_window_shapes_are_shared();
+    test_window_fuzz(3000, 25);
+    test_window_batch_matches_single_shots();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures) {
