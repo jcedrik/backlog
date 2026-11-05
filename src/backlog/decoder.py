@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import stim
 
+from ._core import ParallelWindowDecoder as _CoreParallel
 from ._core import ReferenceDecoder as _CoreReference
 from ._core import SlidingWindowDecoder as _CoreWindow
 from ._core import UnionFindDecoder as _CoreDecoder
@@ -170,6 +171,78 @@ class SlidingWindowDecoder(_Decoder):
         committing, measured in C++.
         """
         return np.asarray(self._core.window_latency_ns(bit_packed_detection_events))
+
+
+class ParallelWindowDecoder(_Decoder):
+    """Streaming decoder that decodes windows on several cores at once.
+
+    The parallel window scheme of Skoric et al. (2023) and Tan et al. (2023):
+
+    1. core windows commit `commit` layers each, with `buffer` layers of
+       buffer on both sides; they do not depend on each other and run in
+       parallel;
+    2. seams, the `seam` layers between two core commit regions, run next,
+       also in parallel, once the cores around them have committed.
+
+    The answer is the same for any number of threads. `seam` must cover the
+    longest edge in time (1 for Stim memory circuits).
+    """
+
+    def __init__(self, edges: GraphEdges, layers, *, commit: int, buffer: int,
+                 seam: int | None = None, threads: int = 1, weighted: bool = True,
+                 resolution: int = 1024):
+        self.edges = edges
+        self.commit = commit
+        self.buffer = buffer
+        self.seam = buffer if seam is None else seam
+        self.weighted = weighted
+        self.resolution = resolution
+        self._core = _CoreParallel(edges.num_detectors, edges.num_observables,
+                                   edges.a, edges.b, edges.obs, edges.p,
+                                   np.ascontiguousarray(layers, dtype=np.int32),
+                                   commit, buffer, max(1, self.seam), threads,
+                                   weighted, resolution)
+
+    @classmethod
+    def from_dem(cls, dem: stim.DetectorErrorModel, *, commit: int, buffer: int,
+                 **kwargs) -> "ParallelWindowDecoder":
+        return cls(dem_to_edges(dem), detector_layers(dem), commit=commit,
+                   buffer=buffer, **kwargs)
+
+    @classmethod
+    def from_circuit(cls, circuit: stim.Circuit, *, commit: int, buffer: int,
+                     **kwargs) -> "ParallelWindowDecoder":
+        return cls.from_dem(circuit.detector_error_model(decompose_errors=True),
+                            commit=commit, buffer=buffer, **kwargs)
+
+    @property
+    def num_layers(self) -> int:
+        return self._core.num_layers
+
+    @property
+    def num_threads(self) -> int:
+        return self._core.num_threads
+
+    @property
+    def num_windows(self) -> int:
+        return self._core.num_windows
+
+    @property
+    def num_shapes(self) -> int:
+        return self._core.num_shapes
+
+    @property
+    def windows(self) -> list[tuple[str, int, int, int, int]]:
+        """(kind, first layer, commit begin, commit end, end layer), in time order."""
+        return list(self._core.windows)
+
+    def window_latency_ns(self, bit_packed_detection_events) -> np.ndarray:
+        """(shots, windows) work time of each window, in nanoseconds."""
+        return np.asarray(self._core.window_latency_ns(bit_packed_detection_events))
+
+    def shot_latency_ns(self, bit_packed_detection_events) -> np.ndarray:
+        """Wall-clock time of each shot with all threads, in nanoseconds."""
+        return np.asarray(self._core.shot_latency_ns(bit_packed_detection_events))
 
 
 class ReferenceDecoder:

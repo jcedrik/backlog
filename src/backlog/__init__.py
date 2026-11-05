@@ -9,16 +9,20 @@
         1000, separate_observables=True)
     predictions = decoder.decode_batch(dets)
 """
-from .decoder import DecodeResult, ReferenceDecoder, SlidingWindowDecoder, UnionFindDecoder
+from .decoder import (DecodeResult, ParallelWindowDecoder, ReferenceDecoder,
+                      SlidingWindowDecoder, UnionFindDecoder)
 from .dem import GraphEdges, dem_to_edges, detector_layers
-from .sinter_decoder import SinterSlidingWindowDecoder, SinterUnionFindDecoder, sinter_decoders
+from .sinter_decoder import (SinterParallelWindowDecoder, SinterSlidingWindowDecoder,
+                             SinterUnionFindDecoder, sinter_decoders)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "DecodeResult",
     "GraphEdges",
+    "ParallelWindowDecoder",
     "ReferenceDecoder",
+    "SinterParallelWindowDecoder",
     "SinterSlidingWindowDecoder",
     "SinterUnionFindDecoder",
     "SlidingWindowDecoder",

@@ -171,3 +171,57 @@ def test_sinter_window_decoder():
         max_shots=2_000, max_errors=500)
     assert stats[0].shots == 2_000
     assert 0 < stats[0].errors < 400
+
+
+# ------------------------------------------------------- parallel windows
+
+
+def test_one_core_window_is_exactly_the_whole_shot_decoder():
+    circuit = surface(5, 0.005)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, _ = sample(circuit, 3_000, seed=4)
+    whole = backlog.UnionFindDecoder.from_dem(dem)
+    par = backlog.ParallelWindowDecoder.from_dem(dem, commit=6, buffer=2, threads=2)
+    assert par.num_windows == 1
+    np.testing.assert_array_equal(par.decode_batch(dets), whole.decode_batch(dets))
+
+
+def test_parallel_answer_does_not_depend_on_threads():
+    circuit = surface(5, 0.008, rounds=24)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, _ = sample(circuit, 300, seed=6)
+    one = backlog.ParallelWindowDecoder.from_dem(dem, commit=3, buffer=2, seam=2, threads=1)
+    two = backlog.ParallelWindowDecoder.from_dem(dem, commit=3, buffer=2, seam=2, threads=2)
+    kinds = [w[0] for w in one.windows]
+    assert kinds[:4] == ["core", "seam", "core", "seam"]
+    for shot in dets:
+        a, b = one.decode_detailed(shot), two.decode_detailed(shot)
+        assert a.syndrome_ok
+        np.testing.assert_array_equal(a.correction, b.correction)
+    packed = np.packbits(dets.astype(np.uint8), axis=1, bitorder="little")
+    assert two.window_latency_ns(packed).shape == (300, two.num_windows)
+    assert two.shot_latency_ns(packed).shape == (300,)
+
+
+def test_parallel_windows_match_whole_shot_accuracy():
+    d = 5
+    circuit = surface(d, 0.005, rounds=5 * d)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, obs = sample(circuit, 20_000, seed=11)
+
+    def errors(decoder):
+        return int(np.sum(np.any(decoder.decode_batch(dets) != obs, axis=1)))
+
+    whole = errors(backlog.UnionFindDecoder.from_dem(dem))
+    parallel = errors(backlog.ParallelWindowDecoder.from_dem(dem, commit=d, buffer=d, threads=2))
+    assert parallel <= 1.05 * whole
+
+
+def test_sinter_parallel_window_decoder():
+    task = sinter.Task(circuit=surface(3, 0.005, rounds=12), json_metadata={"d": 3})
+    stats = sinter.collect(
+        num_workers=1, tasks=[task], decoders=["uf-parallel"],
+        custom_decoders={"uf-parallel": backlog.SinterParallelWindowDecoder(commit=3, buffer=3)},
+        max_shots=2_000, max_errors=500)
+    assert stats[0].shots == 2_000
+    assert 0 < stats[0].errors < 400

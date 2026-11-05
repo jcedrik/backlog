@@ -20,7 +20,7 @@ import numpy as np
 import sinter
 import stim
 
-from .decoder import SlidingWindowDecoder, UnionFindDecoder
+from .decoder import ParallelWindowDecoder, SlidingWindowDecoder, UnionFindDecoder
 
 
 class _Compiled(sinter.CompiledDecoder):
@@ -75,6 +75,28 @@ class SinterSlidingWindowDecoder(SinterUnionFindDecoder):
         return SlidingWindowDecoder.from_dem(dem, commit=self.commit, buffer=self.buffer,
                                              weighted=self.weighted,
                                              resolution=self.resolution)
+
+
+class SinterParallelWindowDecoder(SinterUnionFindDecoder):
+    """A sinter decoder backed by the C++ parallel window decoder.
+
+    sinter already runs one decoder per worker process, so threads defaults
+    to 1 here; the answer does not depend on it.
+    """
+
+    def __init__(self, commit: int, buffer: int, seam: int | None = None,
+                 threads: int = 1, weighted: bool = True, resolution: int = 1024):
+        super().__init__(weighted=weighted, resolution=resolution)
+        self.commit = commit
+        self.buffer = buffer
+        self.seam = seam
+        self.threads = threads
+
+    def _make(self, dem: stim.DetectorErrorModel):
+        return ParallelWindowDecoder.from_dem(dem, commit=self.commit, buffer=self.buffer,
+                                              seam=self.seam, threads=self.threads,
+                                              weighted=self.weighted,
+                                              resolution=self.resolution)
 
 
 def sinter_decoders() -> dict[str, sinter.Decoder]:
