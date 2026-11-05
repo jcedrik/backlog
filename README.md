@@ -14,9 +14,16 @@ correlated decoding within a few percent of PyMatching's correlated matching,
 and faster at large distance; streaming and parallel window decoders; Stim
 and sinter integration; a VHDL core checked bit for bit against the C++.
 
-[Version française](README.fr.md) · [Quickstart notebook](examples/quickstart.ipynb) ·
-[How it works](docs/decoder.md) · [State of the art](docs/related-work.md) ·
-[Changelog](CHANGELOG.md)
+[Live demo](https://jcedrik.github.io/backlog/demo/) · [Version française](README.fr.md) ·
+[Quickstart notebook](examples/quickstart.ipynb) · [How it works](docs/decoder.md) ·
+[State of the art](docs/related-work.md) · [Changelog](CHANGELOG.md)
+
+<a href="https://jcedrik.github.io/backlog/demo/"><img src="docs/demo/preview.svg" width="280" alt="The Union-Find playground: bit flips on a distance-5 surface code, and the clusters the decoder grows around the lit checks"></a>
+
+**[Try it in your browser](https://jcedrik.github.io/backlog/demo/):** flip qubits
+on a surface code, then watch Union-Find grow clusters around the lit checks,
+merge them and peel out a correction, one round at a time. It runs backlog's
+reference decoder, checked edge for edge against the C++.
 
 ```bash
 pip install backlog-qec   # wheels for Linux, macOS (Apple Silicon) and Windows
@@ -370,6 +377,7 @@ make faults      # every pair of faults at d = 3 and 5, every decoder (~6 min)
 make correlated  # correlated vs plain vs PyMatching, same shots (~15 min on 2 cores)
 make noise-study # the decomposition gap with CX or CZ gates, uniform or SI1000 noise (~3 min)
 make predecoder  # lazy and partial predecoders: work, accuracy, time (~10 min, idle machine)
+make demo        # the browser demo at http://localhost:8000/demo/
 make compare     # PyMatching vs Union-Find sweep with sinter (long, resumable)
 make streaming   # sliding windows: accuracy, latency, backlog (a few minutes)
 make parallel    # parallel windows: accuracy, speedup, cores needed (a few minutes)

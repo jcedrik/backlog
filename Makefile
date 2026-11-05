@@ -3,7 +3,7 @@ PY ?= python3
 .PHONY: help deps install cpp test test-cpp test-py test-cli mutants tsan quick baseline plot \
         compare plots streaming streaming-plot parallel parallel-plot scaling latency correlated \
         correlated-speed correlated-plot noise-study noise-study-plot predecoder predecoder-plot \
-        faults faults-plot quickstart hw hw-sim all clean
+        faults faults-plot demo demo-preview quickstart hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
@@ -105,6 +105,13 @@ faults:  ## exhaustive fault enumeration, d = 3 and 5: which pairs each decoder 
 
 faults-plot:  ## redraw results/fault_distance.png
 	$(PY) python/fault_distance.py --plot
+
+demo:  ## the browser demo on http://localhost:8000/demo/ (Ctrl+C to stop)
+	@echo "open http://localhost:8000/demo/"
+	$(PY) -m http.server --directory docs 8000
+
+demo-preview:  ## redraw docs/demo/preview.svg, the README's link to the demo (needs node)
+	node docs/demo/make_preview.js > docs/demo/preview.svg
 
 quickstart:  ## rebuild and run examples/quickstart.ipynb (needs nbformat, nbclient, ipykernel)
 	$(PY) examples/make_quickstart.py

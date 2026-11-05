@@ -15,8 +15,17 @@ PyMatching, et plus rapide à grande distance ; décodeurs en fenêtres
 glissantes et parallèles ; intégration Stim et sinter ; un cœur VHDL vérifié
 bit à bit contre le C++.
 
-[English version](README.md) · [Notebook de démarrage](examples/quickstart.ipynb) · [Historique](CHANGELOG.md) ·
+[Démo en ligne](https://jcedrik.github.io/backlog/demo/) · [English version](README.md) ·
+[Notebook de démarrage](examples/quickstart.ipynb) · [Historique](CHANGELOG.md) ·
 [Fonctionnement](docs/decoder.md) · [État de l'art](docs/related-work.md)
+
+<a href="https://jcedrik.github.io/backlog/demo/"><img src="docs/demo/preview.svg" width="280" alt="Le terrain de jeu Union-Find : des bascules sur un code de surface de distance 5, et les grappes que le décodeur fait croître autour des checks allumés"></a>
+
+**[Essaie-le dans ton navigateur](https://jcedrik.github.io/backlog/demo/) :**
+bascule des qubits sur un code de surface, puis regarde Union-Find faire
+croître des grappes autour des checks allumés, les fusionner et en tirer une
+correction, une ronde à la fois. C'est le décodeur de référence de backlog,
+vérifié arête par arête contre le C++ (la page est en anglais).
 
 ```bash
 pip install backlog-qec   # wheels pour Linux, macOS (Apple Silicon) et Windows
@@ -390,6 +399,7 @@ make faults      # chaque paire de fautes à d = 3 et 5, chaque décodeur (~6 mi
 make correlated  # corrélé contre simple contre PyMatching, mêmes tirages (~15 min sur 2 cœurs)
 make noise-study # l'écart de décomposition avec portes CX ou CZ, bruit uniforme ou SI1000 (~3 min)
 make predecoder  # prédécodeurs paresseux et partiel : travail, exactitude, temps (~10 min)
+make demo        # la démo dans le navigateur, sur http://localhost:8000/demo/
 make compare     # balayage PyMatching contre Union-Find avec sinter (long, reprenable)
 make streaming   # fenêtres glissantes : précision, latence, backlog (quelques minutes)
 make parallel    # fenêtres parallèles : précision, accélération, cœurs nécessaires

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Browser demo (`docs/demo`, GitHub Pages): place bit flips on a surface code
+  and watch the decoder grow clusters, merge them and peel out a correction,
+  round by round, at d = 3 to 11. It runs the reference decoder ported to
+  JavaScript; `tests/test_demo.py` checks it edge for edge against the C++
+  and on every set of up to (d - 1) / 2 flips at d = 3, 5 and 7.
 - `scripts/server_scaling.sh`: one command that builds backlog on a fresh
   Ubuntu machine, runs `make scaling` and packs the results, with a guide to
   measuring on 16 to 32 physical cores (`docs/server-scaling.md`).

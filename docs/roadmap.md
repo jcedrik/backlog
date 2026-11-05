@@ -102,8 +102,12 @@ Next:
 
 ## Phase 4: showcase
 
-- [ ] Web demo: inject errors on a surface code, watch clusters grow
-      (C++ compiled to WebAssembly)
+- [x] Web demo: place bit flips on a surface code, watch clusters grow,
+      merge and peel, round by round (`docs/demo`, on GitHub Pages). It runs
+      the reference decoder ported to JavaScript, checked edge for edge
+      against the C++
+- [ ] The event-driven C++ decoder in the demo through WebAssembly, with
+      measurement errors over time and weights
 - [ ] Write-up: what building a real-time decoder from scratch taught me,
       with the honest limitations
 - [ ] One upstream contribution (Stim, PyMatching or Deltakit), even small:

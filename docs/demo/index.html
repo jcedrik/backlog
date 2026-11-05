@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Union-Find Playground</title>
+<meta name="description" content="Place bit-flip errors on a surface code and watch the Union-Find decoder grow clusters, merge them and pick a correction.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,500..700&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* A surface code chip on a wafer: cool grey ground, navy Z checks, and gold
+     for everything the decoder does. Errors red, the correction green.
+     Layout: the chip on the left, the decoder's controls and story beside it. */
+  --wafer: #e5e9ee;
+  --ink: #16202d;
+  --navy: #1f3a66;
+  --gold: #e8a628;
+  --crimson: #cc2f45;
+  --mint: #1b9a68;
+  --die: #f5f7f9;
+  --ink-soft: #4e5a6b;
+  --pale: #c9d2dd;
+  --line: rgba(31, 58, 102, 0.16);
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--wafer);
+  color: var(--ink);
+  font: 400 1rem/1.55 var(--font-body);
+  -webkit-text-size-adjust: 100%;
+}
+a { color: var(--navy); text-underline-offset: 0.18em; }
+a:hover { color: var(--ink); }
+:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+.wrap { max-width: 1140px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 48px; }
+.top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.brand { font: 700 1.05rem/1 var(--font-display); color: var(--ink); text-decoration: none; letter-spacing: -0.01em; }
+.brand span { color: var(--ink-soft); font-weight: 500; }
+
+h1 {
+  font: 650 clamp(2rem, 1.15rem + 3.2vw, 3.35rem)/1.02 var(--font-display);
+  font-variation-settings: "opsz" 96;
+  letter-spacing: -0.03em;
+  margin: 28px 0 12px;
+  max-width: 18ch;
+  text-wrap: balance;
+}
+.lede { margin: 0 0 24px; color: var(--ink-soft); font-size: 1.125rem; max-width: 60ch; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
+.stage {
+  background: var(--die);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: clamp(8px, 2vw, 20px);
+}
+#board { width: 100%; max-width: 640px; margin: 0 auto; touch-action: manipulation; }
+#board svg { display: block; width: 100%; height: auto; }
+
+.panel { display: grid; gap: 18px; }
+.status { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 0; }
+.status div { padding: 10px 10px 8px; border-radius: 12px; background: var(--die); border: 1px solid var(--line); }
+.status dt { font-size: 0.8125rem; color: var(--ink-soft); }
+.status dd { margin: 0; font: 650 1.6rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+#story { margin: 0; min-height: 6.2em; font-size: 1.0625rem; }
+#story b { font-weight: 700; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button {
+  font: 700 1rem/1 var(--font-body);
+  min-height: 46px;
+  border-radius: 12px;
+  border: 1.5px solid var(--navy);
+  background: transparent;
+  color: var(--navy);
+  cursor: pointer;
+  padding: 0 14px;
+}
+button:hover { background: rgba(31, 58, 102, 0.07); }
+button.primary { background: var(--navy); color: #fff; }
+button.primary:hover { background: #172d50; }
+button:disabled { opacity: 0.45; cursor: default; }
+fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+legend, .label { font-size: 0.875rem; color: var(--ink-soft); padding: 0; }
+.seg { display: grid; grid-template-columns: repeat(5, 1fr); border: 1.5px solid var(--navy); border-radius: 12px; overflow: hidden; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label {
+  text-align: center; padding: 10px 0; cursor: pointer; font-weight: 700; color: var(--navy);
+  font-variant-numeric: tabular-nums; border-left: 1.5px solid var(--navy);
+}
+.seg label:first-of-type { border-left: 0; }
+.seg input:checked + label { background: var(--navy); color: #fff; }
+.seg input:focus-visible + label { outline: 3px solid var(--gold); outline-offset: -3px; }
+.rate { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; }
+.rate input { width: 100%; accent-color: var(--navy); }
+.rate output { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 3.2ch; text-align: right; }
+#challenge { margin: 0; padding: 12px 14px; border-left: 4px solid var(--gold); background: var(--die); border-radius: 0 12px 12px 0; }
+
+.notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 44px; }
+.notes h2 { font: 650 1.25rem/1.2 var(--font-display); letter-spacing: -0.01em; margin: 0 0 10px; }
+.notes p, .notes ol, .notes ul { margin: 0 0 10px; color: var(--ink); max-width: 62ch; }
+.notes ol, .notes ul { padding-left: 1.2em; }
+.notes li { margin-bottom: 6px; }
+.swatch { display: inline-block; width: 0.9em; height: 0.9em; border-radius: 3px; vertical-align: -0.1em; margin-right: 6px; }
+.legend { list-style: none; padding-left: 0 !important; }
+.foot { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 0.9375rem; }
+
+/* the chip */
+.face.z { fill: var(--navy); }
+.face.x { fill: var(--pale); }
+.face.lit { fill: var(--gold); }
+.boundary { stroke: var(--pale); stroke-width: 0.06; stroke-dasharray: 0.14 0.11; fill: none; }
+.boundary.reached { stroke: var(--gold); }
+.grow, .under { stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.grow { stroke: var(--gold); stroke-width: 0.15; }
+.under { stroke: rgba(122, 82, 10, 0.5); stroke-width: 0.22; }
+.grow.tree { stroke-width: 0.19; }
+.under.tree { stroke-width: 0.26; }
+.grow.spare, .under.spare { opacity: 0.3; }
+.residue path { fill: none; stroke-width: 0.13; stroke-linecap: round; stroke-linejoin: round; }
+.residue.ok path { stroke: var(--mint); opacity: 0.75; }
+.residue.fail path { stroke: var(--crimson); }
+.qubit { cursor: pointer; outline: none; }
+.qubit .hit { fill: transparent; }
+.qubit .ring { fill: none; stroke: none; stroke-width: 0.075; }
+.qubit .dot { fill: #fff; stroke: var(--ink); stroke-width: 0.045; }
+.qubit:hover .dot { stroke-width: 0.08; }
+.qubit.error .dot { fill: var(--crimson); stroke: #7d1626; }
+.qubit.fixed .ring { stroke: var(--mint); }
+.qubit:focus-visible .ring { stroke: var(--gold); stroke-width: 0.09; }
+.face.lit.odd, .grow.odd, .under.odd { animation: breathe 1.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .face.lit.odd, .grow.odd, .under.odd { animation: none; }
+}
+
+@media (max-width: 880px) {
+  .layout { grid-template-columns: 1fr; }
+  .notes { grid-template-columns: 1fr; gap: 18px; margin-top: 32px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="https://github.com/jcedrik/backlog">backlog <span>Union-Find playground</span></a>
+    <a href="https://github.com/jcedrik/backlog">Code on GitHub</a>
+  </header>
+
+  <h1>Flip some qubits. Watch the decoder find them.</h1>
+  <p class="lede">A surface code stores one qubit in many. Tap a data qubit to give it a bit
+    flip: the checks around it light up. Then decode, and watch Union-Find grow clusters
+    around the lit checks until it can explain them.</p>
+
+  <main class="layout">
+    <div class="stage">
+      <div id="board"></div>
+    </div>
+
+    <aside class="panel" aria-label="Decoder">
+      <dl class="status">
+        <div><dt>Flips</dt><dd id="s-errors">0</dd></div>
+        <div><dt>Lit checks</dt><dd id="s-lit">0</dd></div>
+        <div><dt>Round</dt><dd id="s-round">0</dd></div>
+        <div><dt>Odd clusters</dt><dd id="s-odd">0</dd></div>
+      </dl>
+      <p id="story" aria-live="polite"></p>
+      <div class="actions">
+        <button id="play" class="primary" type="button">Decode</button>
+        <button id="step" type="button">Step</button>
+        <button id="random" type="button">Random errors</button>
+        <button id="clear" type="button">Clear</button>
+      </div>
+      <fieldset>
+        <legend>Code distance</legend>
+        <div class="seg" role="radiogroup" aria-label="Code distance">
+          <input type="radio" name="d" id="d3" value="3"><label for="d3">3</label>
+          <input type="radio" name="d" id="d5" value="5" checked><label for="d5">5</label>
+          <input type="radio" name="d" id="d7" value="7"><label for="d7">7</label>
+          <input type="radio" name="d" id="d9" value="9"><label for="d9">9</label>
+          <input type="radio" name="d" id="d11" value="11"><label for="d11">11</label>
+        </div>
+      </fieldset>
+      <div class="rate">
+        <label class="label" for="p">Chance of a flip per qubit, for random errors</label>
+        <output id="p-out" for="p">8%</output>
+        <input id="p" type="range" min="1" max="20" step="1" value="8">
+      </div>
+      <p id="challenge"></p>
+    </aside>
+  </main>
+
+  <section class="notes">
+    <div>
+      <h2>What you are looking at</h2>
+      <ul class="legend">
+        <li><span class="swatch" style="background: var(--navy)"></span>Z checks. Each one measures whether
+          an odd number of its qubits flipped.</li>
+        <li><span class="swatch" style="background: var(--pale)"></span>X checks, which watch for the other
+          kind of error. Bit flips leave them alone.</li>
+        <li><span class="swatch" style="background: var(--crimson); border-radius: 50%"></span>A flipped qubit.
+          <span class="swatch" style="background: var(--gold); margin-left: 6px"></span>A lit check, and
+          what the decoder has grown.</li>
+        <li><span class="swatch" style="border: 2.5px solid var(--mint); border-radius: 50%"></span>The decoder's
+          correction. The dashed sides are where a chain of flips can leave the code.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>The algorithm</h2>
+      <ol>
+        <li><b>Grow.</b> Each round, every cluster holding an odd number of lit checks grows by half an
+          edge in every direction.</li>
+        <li><b>Merge.</b> Clusters that meet become one. A cluster stops once it holds an even number of
+          lit checks or reaches a side.</li>
+        <li><b>Peel.</b> The grown edges form a forest. Peeling it from the leaves picks a set of qubits
+          that explains every lit check: the correction.</li>
+      </ol>
+      <p>If the flips and the correction together reach from the left side to the right side, the
+        stored qubit is flipped: a logical error.</p>
+    </div>
+    <div>
+      <h2>Same decoder as backlog</h2>
+      <p>This is <a href="https://github.com/jcedrik/backlog">backlog</a>'s reference decoder, ported line
+        for line from C++ and checked against it edge for edge (<code>tests/test_demo.py</code>).
+        The C++ decoder computes the same answer with events instead of rounds, and adds edge
+        weights from the noise model, measurement errors over time, and correlated decoding.</p>
+      <p><code>pip install backlog-qec</code> ·
+        <a href="https://github.com/jcedrik/backlog/blob/main/docs/decoder.md">how the C++ decoder works</a></p>
+    </div>
+  </section>
+
+  <footer class="foot">
+    Built by Jean-Cédrik Dorélas, MIT license. If this helped you understand Union-Find, a star on
+    <a href="https://github.com/jcedrik/backlog">GitHub</a> helps other people find it.
+  </footer>
+</div>
+
+<script src="uf.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const board = $("board");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EXAMPLE = { d: 5, errors: [4, 12, 21, 23] };
+
+  let code, errors, result, fired;
+  // where the replay is: "syndrome", "grow" (round), "forest", "peel" (step), "done"
+  let stage = "syndrome", round = 0, peeled = 0, timer = null;
+  const t0 = performance.now();
+
+  function setDistance(d, list) {
+    code = UF.surfaceCode(d);
+    errors = new Set((list || []).filter((q) => q >= 0 && q < d * d));
+    document.querySelector(`input[name=d][value="${d}"]`).checked = true;
+    reset();
+  }
+
+  function reset() {
+    stop();
+    fired = UF.syndrome(code, [...errors]);
+    result = UF.decode(code, fired);
+    stage = "syndrome";
+    round = 0;
+    peeled = 0;
+    draw();
+    saveHash();
+  }
+
+  function view() {
+    const lastRound = result.rounds.length - 1;
+    const v = {
+      errors, lit: new Set(fired), round: null, forest: null, faded: null,
+      fixed: new Set(), result: null, phase: ((performance.now() - t0) / 1000) % 1.4,
+    };
+    if (stage === "syndrome") v.round = result.rounds[0];
+    if (stage === "grow") v.round = result.rounds[round];
+    if (stage === "forest" || stage === "peel" || stage === "done") {
+      v.round = result.rounds[lastRound];
+      v.forest = new Set(result.forest);
+      v.faded = new Set();
+      const steps = stage === "forest" ? 0 : stage === "peel" ? peeled : result.peel.length;
+      for (let k = 0; k < steps; k++) {
+        const s = result.peel[k];
+        v.faded.add(s.e);
+        if (s.fix) v.fixed.add(s.e);
+      }
+    }
+    if (stage === "done") {
+      v.result = UF.logicalFlip(code, [...errors], result.correction) ? "fail" : "ok";
+      v.round = null;
+      v.lit = new Set();
+    }
+    return v;
+  }
+
+  function draw() {
+    const focused = document.activeElement && document.activeElement.dataset
+      ? document.activeElement.dataset.q : undefined;
+    const v = view();
+    board.innerHTML = UF.renderSVG(code, v);
+    if (focused !== undefined) {
+      const el = board.querySelector(`[data-q="${focused}"]`);
+      if (el) el.focus({ preventScroll: true });
+    }
+    status(v);
+  }
+
+  function clustersAt(r) {
+    const roots = new Set(), odd = new Set();
+    for (const v of fired) {
+      roots.add(r.roots[v]);
+      if (r.oddRoot[v]) odd.add(r.roots[v]);
+    }
+    return { all: roots.size, odd: odd.size };
+  }
+
+  function status(v) {
+    const lastRound = result.rounds.length - 1;
+    const shownRound = stage === "grow" ? round : stage === "syndrome" ? 0 : lastRound;
+    const cl = clustersAt(result.rounds[shownRound]);
+    $("s-errors").textContent = errors.size;
+    $("s-lit").textContent = fired.length;
+    $("s-round").textContent = shownRound;
+    $("s-odd").textContent = cl.odd;
+    $("story").innerHTML = story(v, cl, lastRound);
+    $("challenge").innerHTML = challenge(v);
+    const finished = stage === "done";
+    $("play").textContent = timer ? "Pause" : finished ? "Replay" : "Decode";
+    $("step").disabled = finished || (errors.size === 0);
+    $("play").disabled = errors.size === 0;
+  }
+
+  function story(v, cl, lastRound) {
+    const k = errors.size, lit = fired.length;
+    if (k === 0) return "Tap any qubit to flip it. The Z checks it belongs to will light up.";
+    if (lit === 0) return `${k === 1 ? "That flip is" : "These flips are"} invisible: every check sees an even number of them. ` +
+      (v.result === "fail" || UF.logicalFlip(code, [...errors], []) ? "It already flips the stored qubit: a logical error no check can see."
+        : "Together they form a loop of stabilizers, which does nothing to the stored qubit.");
+    if (stage === "syndrome") return `<b>${lit} lit check${lit === 1 ? "" : "s"}.</b> The decoder only sees these, not the flips. ` +
+      "Each lit check starts as its own cluster, with an odd number of lit checks in it: one.";
+    if (stage === "grow") {
+      const merged = result.rounds[round].merged.length;
+      const tail = cl.odd === 0 ? "No odd cluster is left: growth stops."
+        : `${cl.odd} cluster${cl.odd === 1 ? " is" : "s are"} still odd and will grow again.`;
+      return `<b>Round ${round}.</b> Every odd cluster grew by half an edge. ` +
+        (merged ? `${merged} edge${merged === 1 ? "" : "s"} filled in, joining clusters. ` : "") + tail;
+    }
+    if (stage === "forest") return "<b>Growth is over.</b> Every cluster holds an even number of lit checks or touches a side. " +
+      "The brightest edges form a spanning forest of each cluster.";
+    if (stage === "peel") return "<b>Peeling.</b> Take a leaf of the forest. If its check is lit, the edge to its parent " +
+      "goes into the correction and the light moves up. Remove the leaf and repeat.";
+    const fixes = result.correction.length;
+    if (v.result === "ok") return `<b>Corrected.</b> The correction flips ${fixes} qubit${fixes === 1 ? "" : "s"}. ` +
+      "With your flips, it only closes loops (green), and loops leave the stored qubit alone.";
+    return `<b>Logical error.</b> The correction explains every lit check, but together with your flips it ` +
+      "stretches from the left side to the right side (red). That flips the stored qubit.";
+  }
+
+  function challenge(v) {
+    const d = code.d, t = (d - 1) / 2, k = errors.size;
+    const base = `A distance-${d} code corrects any ${t} flip${t === 1 ? "" : "s"}. `;
+    if (v.result === "fail" && k === t + 1) return base + `<b>You fooled it with ${k}, the fewest possible.</b>`;
+    if (v.result === "fail") return base + `You fooled it with ${k}. Can you do it with ${t + 1}?`;
+    if (v.result === "ok" && k > t) return base + `It just corrected ${k}. Can you fool it with ${t + 1}?`;
+    return base + `Can you fool it with ${t + 1}?`;
+  }
+
+  // ---- replay ----------------------------------------------------------------
+  function advance() {
+    const lastRound = result.rounds.length - 1;
+    if (stage === "syndrome") {
+      if (lastRound === 0) { stage = "forest"; }
+      else { stage = "grow"; round = 1; }
+    } else if (stage === "grow") {
+      if (round < lastRound) round++;
+      else stage = "forest";
+    } else if (stage === "forest") {
+      stage = result.peel.length ? "peel" : "done";
+      peeled = result.peel.length ? 1 : 0;
+    } else if (stage === "peel") {
+      if (peeled < result.peel.length) peeled++;
+      else stage = "done";
+    } else {
+      return false;
+    }
+    return true;
+  }
+
+  function delay() {
+    if (stage === "peel") return 260;
+    return 900;
+  }
+
+  function play() {
+    if (timer) { stop(); draw(); return; }
+    if (stage === "done") { stage = "syndrome"; round = 0; peeled = 0; }
+    const tick = () => {
+      if (!advance()) { stop(); draw(); return; }
+      draw();
+      if (stage === "done") { stop(); draw(); return; }
+      timer = setTimeout(tick, reduced ? 650 : delay());
+    };
+    timer = setTimeout(tick, 350);
+    draw();
+  }
+
+  function stop() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  }
+
+  function step() {
+    stop();
+    if (stage === "peel") { stage = "done"; peeled = result.peel.length; }
+    else advance();
+    draw();
+  }
+
+  // ---- input -----------------------------------------------------------------
+  function toggle(q) {
+    if (errors.has(q)) errors.delete(q);
+    else errors.add(q);
+    reset();
+  }
+  board.addEventListener("click", (ev) => {
+    const g = ev.target.closest("[data-q]");
+    if (g) toggle(+g.dataset.q);
+  });
+  board.addEventListener("keydown", (ev) => {
+    const g = ev.target.closest("[data-q]");
+    if (!g) return;
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      toggle(+g.dataset.q);
+      return;
+    }
+    const moves = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+    const m = moves[ev.key];
+    if (!m) return;
+    ev.preventDefault();
+    const d = code.d, q = +g.dataset.q;
+    const r = Math.min(d - 1, Math.max(0, Math.floor(q / d) + m[0]));
+    const c = Math.min(d - 1, Math.max(0, (q % d) + m[1]));
+    const next = board.querySelector(`[data-q="${r * d + c}"]`);
+    if (next) next.focus();
+  });
+  $("play").addEventListener("click", play);
+  $("step").addEventListener("click", step);
+  $("clear").addEventListener("click", () => { errors = new Set(); reset(); });
+  $("random").addEventListener("click", () => {
+    const p = +$("p").value / 100, list = [];
+    for (let q = 0; q < code.d * code.d; q++) if (Math.random() < p) list.push(q);
+    errors = new Set(list);
+    reset();
+  });
+  $("p").addEventListener("input", () => { $("p-out").textContent = $("p").value + "%"; });
+  document.querySelectorAll("input[name=d]").forEach((el) => {
+    el.addEventListener("change", () => setDistance(+el.value, []));
+  });
+
+  // A pattern can be shared as #d5-6-12-16: the distance, then the flipped qubits.
+  function saveHash() {
+    const h = "#d" + code.d + [...errors].sort((a, b) => a - b).map((q) => "-" + q).join("");
+    try { history.replaceState(null, "", h); } catch (e) { /* not allowed here */ }
+  }
+  function readHash() {
+    const m = /^#d(3|5|7|9|11)((?:-\d+)*)$/.exec(location.hash);
+    if (!m) return null;
+    return { d: +m[1], errors: m[2].split("-").filter(Boolean).map(Number) };
+  }
+
+  const hot = window.claude && window.claude.hot;
+  if (hot && hot.snapshot) hot.snapshot(() => ({ d: code.d, errors: [...errors] }));
+  const start = (saved) => {
+    const fromHash = readHash();
+    const s = (saved && saved.d) ? saved : fromHash || EXAMPLE;
+    setDistance(s.d, s.errors);
+    if (!fromHash && !(saved && saved.d) && !reduced) setTimeout(() => { if (stage === "syndrome" && !timer) play(); }, 1200);
+  };
+  if (hot && hot.ready) hot.ready(start);
+  else start(hot && hot.data ? hot.data : {});
+})();
+</script>
+</body>
+</html>
