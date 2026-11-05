@@ -4,14 +4,28 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "backlog-qec"
-version = "0.4.0"
-description = "Real-time Union-Find decoder for quantum error correction, with Stim and sinter integration"
+version = "0.5.0"
+description = "Real-time Union-Find decoder for quantum error correction: correlated, streaming, parallel, with Stim and sinter integration"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Jean-Cédrik Dorélas" }]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "stim>=1.14", "sinter>=1.14"]
-keywords = ["quantum error correction", "decoder", "union-find", "stim", "sinter", "surface code"]
+keywords = ["quantum error correction", "decoder", "union-find", "correlated decoding",
+            "real-time decoding", "stim", "sinter", "surface code", "fpga"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Homepage = "https://github.com/jcedrik/backlog"
+Documentation = "https://github.com/jcedrik/backlog/blob/main/docs/decoder.md"
+Issues = "https://github.com/jcedrik/backlog/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "pymatching>=2.3"]

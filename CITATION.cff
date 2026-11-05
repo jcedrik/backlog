@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use backlog in your work, please cite it as below."
+title: "backlog: a real-time Union-Find decoder for quantum error correction, from simulation to FPGA"
+abstract: >-
+  An open-source weighted Union-Find decoder for the surface code, exact to a
+  synchronous reference, with correlated (two-pass) decoding and the
+  regularized reweighting rule, sliding and parallel window decoding for
+  streaming, Stim and sinter integration, and a VHDL implementation checked
+  bit for bit against the C++ model.
+authors:
+  - family-names: "Dorélas"
+    given-names: "Jean-Cédrik"
+type: software
+license: MIT
+version: "0.5.0"
+date-released: "2026-11-05"
+repository-code: "https://github.com/jcedrik/backlog"
+keywords:
+  - quantum error correction
+  - surface code
+  - decoder
+  - union-find
+  - correlated decoding
+  - real-time decoding
+  - FPGA
