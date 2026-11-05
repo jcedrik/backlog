@@ -2,7 +2,8 @@ PY ?= python3
 
 .PHONY: help deps install cpp test test-cpp test-py test-cli mutants tsan quick baseline plot \
         compare plots streaming streaming-plot parallel parallel-plot scaling latency correlated \
-        correlated-speed correlated-plot faults faults-plot quickstart hw hw-sim all clean
+        correlated-speed correlated-plot noise-study noise-study-plot faults faults-plot quickstart \
+        hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
@@ -79,6 +80,19 @@ correlated-plot:  ## redraw results/correlated.png and print the Lambda table
 
 decomposition-plot:  ## redraw results/decomposition.png: correlated vs plain matching, both decompositions
 	$(PY) python/decomposition_plot.py results/correlated_decomposition.csv results/decomposition.png
+
+RCM := ext/rcm
+RCM_COMMIT := f84415af0cc3596aab96f0e4e8a37052db2729c0
+
+noise-study: $(RCM)  ## the decomposition gap with CX or CZ gates, uniform or SI1000 noise (~3 min)
+	$(PY) python/noise_study.py --rcm $(RCM)
+
+noise-study-plot:  ## redraw results/noise_study.png
+	$(PY) python/noise_study.py --plot
+
+$(RCM):  # the CZ circuits with SI1000 noise of arXiv:2610.26785 (Apache-2.0)
+	git clone --quiet https://github.com/cesar-hernando/regularized-correlated-matching $(RCM)
+	git -C $(RCM) checkout --quiet $(RCM_COMMIT)
 
 faults:  ## exhaustive fault enumeration, d = 3 and 5: which pairs each decoder gets wrong (~6 min)
 	$(PY) python/fault_distance.py

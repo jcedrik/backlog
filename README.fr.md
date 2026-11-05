@@ -55,7 +55,9 @@ print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1)
   *plus* d'erreurs logiques que le décodage simple, pour PyMatching comme
   pour backlog. Couper chaque erreur en exactement sa partie X et sa partie Z
   (`backlog.decompose_by_basis`, maintenant le défaut) en fait un gain, et
-  fait passer le gain à d = 5 de 28 % à 46 %. Signalé à PyMatching :
+  fait passer le gain à d = 5 de 28 % à 46 %. Avec le bruit SI1000 ou des
+  portes CZ, l'écart rétrécit, mais la séparation X/Z gagne quand même dans les
+  huit montages testés. Signalé à PyMatching :
   [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193) ;
   pourquoi ça arrive et comment vérifier votre propre montage :
   [l'article (en anglais)](docs/correlated-decoding-decomposition.md).
@@ -353,6 +355,7 @@ make mutants     # test par mutation, environ dix minutes
 make tsan        # tests C++ sous ThreadSanitizer
 make faults      # chaque paire de fautes à d = 3 et 5, chaque décodeur (~6 min)
 make correlated  # corrélé contre simple contre PyMatching, mêmes tirages (~15 min sur 2 cœurs)
+make noise-study # l'écart de décomposition avec portes CX ou CZ, bruit uniforme ou SI1000 (~3 min)
 make compare     # balayage PyMatching contre Union-Find avec sinter (long, reprenable)
 make streaming   # fenêtres glissantes : précision, latence, backlog (quelques minutes)
 make parallel    # fenêtres parallèles : précision, accélération, cœurs nécessaires

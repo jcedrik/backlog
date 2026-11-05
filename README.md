@@ -54,7 +54,9 @@ print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mea
   logical errors than plain decoding, for PyMatching and backlog alike.
   Splitting every error into exactly its X part and its Z part
   (`backlog.decompose_by_basis`, now the default) turns that into a gain and
-  takes the gain at d = 5 from 28% to 46%. Reported upstream:
+  takes the gain at d = 5 from 28% to 46%. With SI1000 noise or CZ gates the
+  gap shrinks, but the X/Z split still wins in all eight settings tested.
+  Reported upstream:
   [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193);
   why it happens and how to check your own setup:
   [the write-up](docs/correlated-decoding-decomposition.md).
@@ -337,6 +339,7 @@ make mutants     # mutation testing, about ten minutes
 make tsan        # C++ tests under ThreadSanitizer
 make faults      # every pair of faults at d = 3 and 5, every decoder (~6 min)
 make correlated  # correlated vs plain vs PyMatching, same shots (~15 min on 2 cores)
+make noise-study # the decomposition gap with CX or CZ gates, uniform or SI1000 noise (~3 min)
 make compare     # PyMatching vs Union-Find sweep with sinter (long, resumable)
 make streaming   # sliding windows: accuracy, latency, backlog (a few minutes)
 make parallel    # parallel windows: accuracy, speedup, cores needed (a few minutes)

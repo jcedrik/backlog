@@ -103,11 +103,51 @@ decoder saw the same million shots per point, and the counts are in
 
 ![Change in logical errors with correlated matching vs plain matching, with Stim's decomposition and with the X/Z split, at d = 3 and 5, p = 0.1% and 0.3%](../results/decomposition.png)
 
-The effect depends on the noise model. These runs use Stim's uniform circuit
-noise, the kind its generated circuits and its getting-started notebook use.
-With SI1000 noise, the Leiden and Riverlane paper reports no significant
-difference between the two decompositions (its Appendix D.1). So check your
-own noise model before trusting either decomposition.
+## Noise model or gates?
+
+These runs use Stim's generated circuits: CX gates and uniform circuit noise.
+The Leiden and Riverlane paper uses CZ circuits with SI1000 noise, and reports
+no significant difference between the two decompositions there (its Appendix
+D.1). Two things change between those setups, so I crossed them: Stim's CX
+circuit and the paper's CZ circuit, each with uniform noise and with SI1000,
+at p = 0.1% (`make noise-study`). The same code adds both noise models to the
+noiseless circuits, and it reproduces Stim's own noisy circuit and the paper's
+circuit files exactly, error for error.
+
+![Change in logical errors with correlated vs plain matching, Stim's decomposition and the X/Z split, for CX and CZ gates under uniform and SI1000 noise, at d = 3 and 5](../results/noise_study.png)
+
+Both the gates and the noise model shrink the gap, by about as much each, and
+the X/Z split still wins in all eight settings:
+
+| Setting | Stim splits differently | X/Z vs Stim, d = 3 | X/Z vs Stim, d = 5 |
+|---|---|---|---|
+| CX gates, uniform noise (Stim's circuits) | 6.1% | −38% | −26% |
+| CX gates, SI1000 | 3.0% | −19% | −10% |
+| CZ gates, uniform noise | 4.4% | −21% | −11% |
+| CZ gates, SI1000 (the paper's circuits) | 2.7% | −6% | −5% |
+
+The second column is the share of the error probability, at d = 3, carried by
+errors that Stim splits into something other than their X and Z parts. The
+last two are the logical errors of PyMatching's correlated matching with the
+X/Z split, relative to Stim's decomposition, on the same 2 million shots;
+correlated Union-Find gives the same picture
+([`results/noise_study.csv`](../results/noise_study.csv)).
+
+Which errors Stim mis-splits depends on the circuit, not on the noise
+strengths: 88 of the 286 errors of the CX model at d = 3 under both noise
+models, 89 of 299 for the CZ model. What changes is how much probability they
+carry, and the gap follows that share. SI1000 adds its extra noise on
+measurement, reset and idling, whose errors Stim splits correctly or does not
+need to split; with CZ gates, the mis-split errors carry less of the
+probability too (4.4% instead of 6.1% under uniform noise). In the paper's own
+setting the gap is down to 5 to 6%: easy to miss, but still clear with
+2 million shots (paired z = −9.9 at d = 3, −3.9 at d = 5).
+
+The exact test agrees. At d = 3, Stim's decomposition makes correlated
+matching get 5 or 6 single faults wrong in every setting, and the X/Z split
+none, except 2 in the paper's setting. Those 2 go away with the paper's
+regularization (α ≤ 0.5 on my Union-Find), so they belong to the distance loss
+below, not to the decomposition.
 
 ## A separate problem: the distance loss
 
