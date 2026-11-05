@@ -14,6 +14,9 @@ from .dem import (Correlations, GraphEdges, decompose_by_basis, dem_correlations
                   detector_layers)
 
 
+_PREDECODE = {None: 0, "lazy": 1, "partial": 2}
+
+
 def _mask_to_bits(mask: int, num_observables: int) -> np.ndarray:
     return np.array([(mask >> k) & 1 for k in range(num_observables)], dtype=bool)
 
@@ -108,18 +111,35 @@ class UnionFindDecoder(_Decoder):
     decomposed errors cheaper, at probability min(0.5, alpha * P(edge | first
     edge)), and the second pass decides. alpha = 1 is standard correlated
     decoding; alpha < 1 is the regularized rule (see regularization_strength).
+
+    predecode puts a predecoder in front of Union-Find. It settles every
+    isolated defect (no other defect within two edges) that pairs with an
+    adjacent defect or sits next to the boundary. predecode="partial" settles
+    those and runs Union-Find on the rest; predecode="lazy" settles a shot
+    only if every defect is settled, as Delfosse's lazy decoder
+    (arXiv:2001.11427), and leaves any other shot to Union-Find unchanged.
+    stats()["predecoded"] counts the shots settled whole and
+    stats()["predecoded_defects"] the defects settled.
     """
 
     def __init__(self, edges: GraphEdges, *, weighted: bool = True,
                  resolution: int = 1024, correlations: Correlations | None = None,
-                 alpha: float = 1.0):
+                 alpha: float = 1.0, predecode: str | None = None):
+        if predecode not in _PREDECODE:
+            raise ValueError('predecode must be None, "lazy" or "partial"')
         self.edges = edges
         self.weighted = weighted
         self.resolution = resolution
         self.alpha = alpha
         self._core = _CoreDecoder(edges.num_detectors, edges.num_observables,
                                   edges.a, edges.b, edges.obs, edges.p,
-                                  weighted, resolution, **_corr_kwargs(correlations, alpha))
+                                  weighted, resolution, **_corr_kwargs(correlations, alpha),
+                                  predecode=_PREDECODE[predecode])
+
+    @property
+    def predecode(self) -> str | None:
+        """The predecoder mode: None, "lazy" or "partial"."""
+        return (None, "lazy", "partial")[self._core.predecode]
 
     @classmethod
     def from_dem(cls, dem: stim.DetectorErrorModel, *, correlated: bool = False,

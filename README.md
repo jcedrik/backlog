@@ -265,6 +265,31 @@ whole memory experiments of d rounds:
 | 9 | 0.3% | 11.3 µs | 41.9 µs | 11.8 µs | 12.2 µs |
 | 13 | 0.3% | 38.4 µs | 97.6 µs | 40.0 µs | 40.7 µs |
 
+### Predecoder: easy shots without Union-Find
+
+![Work taken off Union-Find and decoding time, lazy and partial predecoders, d = 3 to 13](results/predecoder.png)
+
+A predecoder settles every isolated defect (no other defect within two edges)
+that pairs with an adjacent defect or sits next to the boundary.
+`predecode="lazy"`, after Delfosse's lazy decoder
+([arXiv:2001.11427](https://arxiv.org/abs/2001.11427)), settles a shot only if
+all its defects are settled, and leaves any other shot to Union-Find unchanged.
+`predecode="partial"` settles the isolated defects of every shot and runs
+Union-Find on the rest. Both decode every single fault and every pair of faults
+of the d = 5 circuit correctly. On the same 500,000 shots per point:
+
+- **Lazy never changed an answer**, 0 out of 9,000,000. At p = 0.1% it settles
+  99% of shots at d = 3, 90% at d = 5 and 66% at d = 7: in hardware, those
+  shots never reach the main decoder. In software it is up to 1.9 times
+  faster at small distance, and up to 8% slower once it settles few shots.
+- **Partial** takes 54 to 97% of the defects off Union-Find at p = 0.1% and
+  below, and is 1.1 to 1.9 times faster there. But it changes answers: at
+  p = 0.3% it makes up to 12% more logical errors, and from d = 9 it is
+  slower.
+- **Why so little time for so many defects:** the defects a local rule can
+  settle are the ones Union-Find already handles cheaply. The time goes into
+  the dense clusters, which a predecoder has to leave alone.
+
 ### Hardware (v0: 1D, unweighted)
 
 Union-Find core in VHDL, bit-exact against its golden model on 10,000+
@@ -302,12 +327,16 @@ print("correlated:", (corr.decode_batch(dets) != obs).any(axis=1).mean())
 window = backlog.SlidingWindowDecoder.from_circuit(circuit, commit=5, buffer=5, correlated=True)
 print("windowed:", (window.decode_batch(dets) != obs).any(axis=1).mean())
 
+# A predecoder in front: shots made only of isolated, easy defects skip Union-Find
+lazy = backlog.UnionFindDecoder.from_circuit(circuit, predecode="lazy")
+print("with predecoder:", (lazy.decode_batch(dets) != obs).any(axis=1).mean())
+
 # Parallel windows on 2 threads (same answer for any number of threads)
 parallel = backlog.ParallelWindowDecoder.from_circuit(circuit, commit=5, buffer=5, threads=2)
 print("parallel:", (parallel.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
-As sinter decoders (`backlog-uf`, `backlog-uf-corr`, `backlog-uf-unweighted`),
+As sinter decoders (`backlog-uf`, `backlog-uf-corr`, `backlog-uf-pre`, `backlog-uf-unweighted`),
 from Python:
 
 ```python
@@ -340,6 +369,7 @@ make tsan        # C++ tests under ThreadSanitizer
 make faults      # every pair of faults at d = 3 and 5, every decoder (~6 min)
 make correlated  # correlated vs plain vs PyMatching, same shots (~15 min on 2 cores)
 make noise-study # the decomposition gap with CX or CZ gates, uniform or SI1000 noise (~3 min)
+make predecoder  # lazy and partial predecoders: work, accuracy, time (~10 min, idle machine)
 make compare     # PyMatching vs Union-Find sweep with sinter (long, resumable)
 make streaming   # sliding windows: accuracy, latency, backlog (a few minutes)
 make parallel    # parallel windows: accuracy, speedup, cores needed (a few minutes)

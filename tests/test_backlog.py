@@ -401,3 +401,50 @@ def test_sinter_correlated_decoder():
                            max_shots=2000, custom_decoders=backlog.sinter_decoders())
     assert stats[0].shots == 2000
     assert stats[0].errors < 200
+
+
+# ---------------------------------------------------------------- predecoder
+
+
+@pytest.mark.parametrize("mode", ["lazy", "partial"])
+def test_predecoder_keeps_every_single_fault_and_pair_at_distance_5(mode):
+    # The predecoder only settles defects that are isolated (no other defect
+    # within two edges), so its edges differ from the true faults by short
+    # cycles: it must not cost distance. Checked on every single fault and
+    # every pair of faults of the d = 5 circuit, which plain Union-Find decodes.
+    dem = backlog.decompose_by_basis(surface(5, 1e-3).detector_error_model(decompose_errors=True))
+    single, flip = fault_symptoms(dem)
+    i, j = np.triu_indices(len(flip), k=1)
+    pre = backlog.UnionFindDecoder(backlog.dem_to_edges(dem), predecode=mode)
+    assert pre.predecode == mode
+    assert wrong(pre, single, flip) == 0
+    assert wrong(pre, single[i] ^ single[j], flip[i] ^ flip[j]) == 0
+    assert pre.stats()["predecoded"] > len(i) // 4   # it did settle many of them
+
+
+@pytest.mark.parametrize("mode", ["lazy", "partial"])
+def test_predecoder_settles_most_shots_and_keeps_accuracy(mode):
+    circuit = surface(5, 1e-3)
+    dets, obs = sample(circuit, 20_000, seed=5)
+    plain = backlog.UnionFindDecoder.from_circuit(circuit)
+    pre = backlog.UnionFindDecoder.from_circuit(circuit, predecode=mode)
+    errors = int(np.any(pre.decode_batch(dets) != obs, axis=1).sum())
+    assert pre.stats()["predecoded"] > 0.85 * len(dets)
+    assert errors <= int(np.any(plain.decode_batch(dets) != obs, axis=1).sum()) + 2
+    for shot in dets[:300]:
+        assert pre.decode_detailed(shot).syndrome_ok
+
+
+def test_predecoder_mode_is_checked():
+    edges = backlog.dem_to_edges(surface(3, 1e-3).detector_error_model(decompose_errors=True))
+    assert backlog.UnionFindDecoder(edges).predecode is None
+    with pytest.raises(ValueError):
+        backlog.UnionFindDecoder(edges, predecode="eager")
+
+
+def test_sinter_predecoder():
+    task = sinter.Task(circuit=surface(3, 0.004), json_metadata={"d": 3})
+    stats = sinter.collect(num_workers=1, tasks=[task], decoders=["backlog-uf-pre"],
+                           max_shots=2000, custom_decoders=backlog.sinter_decoders())
+    assert stats[0].shots == 2000
+    assert stats[0].errors < 200

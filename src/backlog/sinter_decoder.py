@@ -10,7 +10,8 @@ or from the sinter command line:
     sinter collect ... --decoders backlog-uf \\
         --custom_decoders_module_function "backlog:sinter_decoders"
 
-Correlated decoding is "backlog-uf-corr" (standard, alpha = 1). The
+Correlated decoding is "backlog-uf-corr" (standard, alpha = 1), and
+"backlog-uf-pre" puts the lazy predecoder in front of Union-Find. The
 regularized rule takes the reweighting strength explicitly:
 
     custom_decoders={"uf-rcorr": backlog.SinterUnionFindDecoder(correlated=True, alpha=0.5)}
@@ -40,18 +41,19 @@ class SinterUnionFindDecoder(sinter.Decoder):
     """A sinter decoder backed by the C++ Union-Find decoder."""
 
     def __init__(self, weighted: bool = True, resolution: int = 1024,
-                 correlated: bool = False, alpha: float = 1.0):
+                 correlated: bool = False, alpha: float = 1.0, predecode: str | None = None):
         self.weighted = weighted
         self.resolution = resolution
         self.correlated = correlated
         self.alpha = alpha
+        self.predecode = predecode
 
     def _options(self) -> dict:
         return dict(weighted=self.weighted, resolution=self.resolution,
                     correlated=self.correlated, alpha=self.alpha)
 
     def _make(self, dem: stim.DetectorErrorModel):
-        return UnionFindDecoder.from_dem(dem, **self._options())
+        return UnionFindDecoder.from_dem(dem, predecode=self.predecode, **self._options())
 
     def compile_decoder_for_dem(self, *, dem: stim.DetectorErrorModel) -> sinter.CompiledDecoder:
         return _Compiled(self._make(dem))
@@ -117,4 +119,5 @@ def sinter_decoders() -> dict[str, sinter.Decoder]:
         "backlog-uf": SinterUnionFindDecoder(weighted=True),
         "backlog-uf-unweighted": SinterUnionFindDecoder(weighted=False),
         "backlog-uf-corr": SinterUnionFindDecoder(correlated=True),
+        "backlog-uf-pre": SinterUnionFindDecoder(predecode="lazy"),
     }

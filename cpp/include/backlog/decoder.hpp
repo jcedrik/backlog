@@ -62,7 +62,12 @@ struct DecoderStats {
     uint64_t edge_reschedules = 0;   // growth-rate updates of single edges
     uint64_t events_popped = 0;      // queue pops, stale ones included
     uint64_t reweighted_edges = 0;   // weights lowered for second passes
+    uint64_t predecoded = 0;         // shots the predecoder settled alone
+    uint64_t predecoded_defects = 0; // defects it settled, in any shot
 };
+
+// Predecoder modes (see UnionFindDecoder::set_predecode).
+enum class Predecode { Off, Lazy, Partial };
 
 // Reweighting rules for correlated decoding, a CSR table over edges: rules
 // [offset[e], offset[e+1]) of edge e lower edge target[k] to weight[k] (>= 1).
@@ -119,6 +124,21 @@ public:
     // Correction of the last shot's first pass (correlated decoding only).
     const std::vector<int32_t>& last_first_pass() const { return first_; }
 
+    // Predecoder, before Union-Find. A defect is settled locally if it is
+    // isolated (no other defect within two edges, except its partner) and
+    // either pairs with an adjacent defect or sits next to the boundary. A
+    // pair is kept only if its edge is no heavier than sending both ends to
+    // the boundary.
+    //   Lazy     all or nothing, as Delfosse's lazy decoder (arXiv:2001.11427):
+    //            a shot is settled only if every defect is; any other shot
+    //            goes to Union-Find unchanged.
+    //   Partial  the isolated defects are settled and Union-Find decodes the
+    //            rest. With correlated decoding, Partial acts as Lazy.
+    // Off by default; applies to every decode call. stats().predecoded counts
+    // the shots settled whole, stats().predecoded_defects the defects.
+    void set_predecode(Predecode mode);
+    Predecode predecode() const { return predecode_; }
+
     // fired: detector ids, any order; a detector listed twice cancels out.
     uint64_t decode(const int32_t* fired, std::size_t count);
     uint64_t decode(const std::vector<int32_t>& fired) {
@@ -148,9 +168,14 @@ public:
     void reset_stats() { stats_ = DecoderStats{}; }
 
 private:
-    // One shot: one pass, or two when correlated.
+    // One shot: the predecoder if on, else one pass, or two when correlated.
     uint64_t solve(const int32_t* fired, std::size_t count,
                    std::vector<int32_t>* correction);
+    // The predecoder: settles what it can into plocal_, leaves the rest in
+    // presidual_. False (and nothing settled) if the whole shot must go to
+    // Union-Find unchanged.
+    bool predecode_shot(const int32_t* fired, std::size_t count);
+    bool clear_two_hops(int32_t v, int32_t partner) const;
     // One pass of Union-Find with the current weights.
     uint64_t run(const int32_t* fired, std::size_t count,
                  std::vector<int32_t>* correction);
@@ -294,6 +319,14 @@ private:
     std::vector<int32_t> leaves_;
     int32_t steps_ = 0;
     DecoderStats stats_;
+
+    Predecode predecode_ = Predecode::Off;
+    std::vector<uint8_t> pstate_;       // per node: 0 no defect, 1 defect, 2 settled, 3 left
+    std::vector<int32_t> pboundary_;    // per detector: lightest boundary edge, or -1
+    std::vector<int32_t> near_offset_;  // per detector: the detectors within two
+    std::vector<int32_t> near_;         //   edges of it, a CSR table
+    std::vector<int32_t> plocal_;       // edges the predecoder chose
+    std::vector<int32_t> presidual_;    // defects it left for Union-Find
 
     ReweightRules rules_;
     std::vector<int32_t> first_;                         // first-pass correction

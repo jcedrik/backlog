@@ -281,6 +281,34 @@ par point, expériences mémoire complètes de d rondes :
 | 9 | 0,3 % | 11,3 µs | 41,9 µs | 11,8 µs | 12,2 µs |
 | 13 | 0,3 % | 38,4 µs | 97,6 µs | 40,0 µs | 40,7 µs |
 
+### Prédécodeur : les tirages faciles sans Union-Find
+
+![Travail retiré à Union-Find et temps de décodage, prédécodeurs paresseux et partiel, d = 3 à 13](results/predecoder.png)
+
+Un prédécodeur règle chaque défaut isolé (aucun autre défaut à deux arêtes ou
+moins) qui forme une paire avec un défaut voisin ou qui touche la frontière.
+`predecode="lazy"`, d'après le décodeur paresseux de Delfosse
+([arXiv:2001.11427](https://arxiv.org/abs/2001.11427)), règle un tirage
+seulement si tous ses défauts sont réglés, et laisse tout autre tirage à
+Union-Find tel quel. `predecode="partial"` règle les défauts isolés de chaque
+tirage et passe le reste à Union-Find. Les deux décodent correctement chaque
+faute seule et chaque paire de fautes du circuit d = 5. Sur les mêmes
+500 000 tirages par point :
+
+- **Le paresseux n'a jamais changé une réponse**, 0 sur 9 000 000. À
+  p = 0,1 %, il règle 99 % des tirages à d = 3, 90 % à d = 5 et 66 % à d = 7 :
+  en matériel, ces tirages n'atteignent jamais le décodeur principal. En
+  logiciel, il va jusqu'à 1,9 fois plus vite à petite distance, et jusqu'à
+  8 % plus lentement quand il règle peu de tirages.
+- **Le partiel** retire 54 à 97 % des défauts à Union-Find à p = 0,1 % et
+  moins, et va 1,1 à 1,9 fois plus vite. Mais il change des réponses : à
+  p = 0,3 %, il fait jusqu'à 12 % plus d'erreurs logiques, et à partir de
+  d = 9 il est plus lent.
+- **Pourquoi si peu de temps pour autant de défauts :** les défauts qu'une
+  règle locale peut régler sont ceux qu'Union-Find traite déjà à peu de frais.
+  Le temps passe dans les grappes denses, qu'un prédécodeur doit laisser
+  tranquilles.
+
 ### Matériel (v0 : 1D, non pondéré)
 
 Cœur Union-Find en VHDL, exact bit à bit contre son modèle de référence sur
@@ -319,12 +347,16 @@ print("corrélé :", (corr.decode_batch(dets) != obs).any(axis=1).mean())
 window = backlog.SlidingWindowDecoder.from_circuit(circuit, commit=5, buffer=5, correlated=True)
 print("fenêtres :", (window.decode_batch(dets) != obs).any(axis=1).mean())
 
+# Un prédécodeur devant : les tirages faits seulement de défauts isolés et faciles sautent Union-Find
+lazy = backlog.UnionFindDecoder.from_circuit(circuit, predecode="lazy")
+print("avec prédécodeur :", (lazy.decode_batch(dets) != obs).any(axis=1).mean())
+
 # Fenêtres parallèles sur 2 threads (même réponse peu importe le nombre de threads)
 parallel = backlog.ParallelWindowDecoder.from_circuit(circuit, commit=5, buffer=5, threads=2)
 print("parallèle :", (parallel.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
-Comme décodeurs sinter (`backlog-uf`, `backlog-uf-corr`,
+Comme décodeurs sinter (`backlog-uf`, `backlog-uf-corr`, `backlog-uf-pre`,
 `backlog-uf-unweighted`), depuis Python :
 
 ```python
@@ -357,6 +389,7 @@ make tsan        # tests C++ sous ThreadSanitizer
 make faults      # chaque paire de fautes à d = 3 et 5, chaque décodeur (~6 min)
 make correlated  # corrélé contre simple contre PyMatching, mêmes tirages (~15 min sur 2 cœurs)
 make noise-study # l'écart de décomposition avec portes CX ou CZ, bruit uniforme ou SI1000 (~3 min)
+make predecoder  # prédécodeurs paresseux et partiel : travail, exactitude, temps (~10 min)
 make compare     # balayage PyMatching contre Union-Find avec sinter (long, reprenable)
 make streaming   # fenêtres glissantes : précision, latence, backlog (quelques minutes)
 make parallel    # fenêtres parallèles : précision, accélération, cœurs nécessaires

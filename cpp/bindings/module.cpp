@@ -92,17 +92,24 @@ PYBIND11_MODULE(_core, mod) {
                          const U64& obs, const F64& p, bool weighted,
                          int32_t resolution, const py::object& corr_offset,
                          const py::object& corr_target, const py::object& corr_conditional,
-                         double alpha) {
+                         double alpha, int predecode) {
+                 if (predecode < 0 || predecode > 2) {
+                     throw std::invalid_argument("predecode must be 0 (off), 1 (lazy) or 2 (partial)");
+                 }
                  DecodingGraph g = make_graph(n, m, a, b, obs, p, weighted, resolution);
                  ReweightRules rules = make_rules(g, corr_offset, corr_target, corr_conditional, alpha);
-                 return std::make_unique<UnionFindDecoder>(std::move(g), std::move(rules));
+                 auto d = std::make_unique<UnionFindDecoder>(std::move(g), std::move(rules));
+                 d->set_predecode(static_cast<backlog::Predecode>(predecode));
+                 return d;
              }),
              py::arg("num_detectors"), py::arg("num_observables"), py::arg("a"),
              py::arg("b"), py::arg("obs"), py::arg("p"), py::arg("weighted") = true,
              py::arg("resolution") = 1024, py::arg("corr_offset") = py::none(),
              py::arg("corr_target") = py::none(), py::arg("corr_conditional") = py::none(),
-             py::arg("alpha") = 1.0)
+             py::arg("alpha") = 1.0, py::arg("predecode") = 0)
         .def_property_readonly("correlated", &UnionFindDecoder::correlated)
+        .def_property_readonly("predecode",
+                               [](const UnionFindDecoder& d) { return static_cast<int>(d.predecode()); })
         .def_property_readonly("rules",
                                [](const UnionFindDecoder& d) { return rules_tuple(d.reweight_rules()); })
         .def_property_readonly("last_first_pass", &UnionFindDecoder::last_first_pass)
@@ -129,6 +136,8 @@ PYBIND11_MODULE(_core, mod) {
                  out["edge_reschedules"] = s.edge_reschedules;
                  out["events_popped"] = s.events_popped;
                  out["reweighted_edges"] = s.reweighted_edges;
+                 out["predecoded"] = s.predecoded;
+                 out["predecoded_defects"] = s.predecoded_defects;
                  return out;
              })
         .def("reset_stats", &UnionFindDecoder::reset_stats)

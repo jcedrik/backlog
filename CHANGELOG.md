@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Predecoder in front of Union-Find: `predecode="lazy"` settles a shot whose
+  defects are all isolated pairs or lone defects next to the boundary, as
+  Delfosse's lazy decoder, and `predecode="partial"` settles the isolated
+  defects of every shot and decodes the rest. Lazy never changed an answer on
+  9,000,000 shots and is up to 1.9 times faster at small distance; partial is
+  faster at p = 0.1% and below but costs accuracy at p = 0.3%. Sinter decoder
+  `backlog-uf-pre`, `make predecoder`, C++ fuzzing of both modes, and a check
+  on every pair of faults at d = 5.
 - VHDL core: cluster parity and boundary contact from a Kogge-Stone parallel
   prefix scan instead of ripple chains (`PARALLEL => true`, the default). Same
   outputs bit for bit, now checked from N = 8 to 128; on the iCE40, Fmax at

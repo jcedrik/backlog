@@ -2,8 +2,8 @@ PY ?= python3
 
 .PHONY: help deps install cpp test test-cpp test-py test-cli mutants tsan quick baseline plot \
         compare plots streaming streaming-plot parallel parallel-plot scaling latency correlated \
-        correlated-speed correlated-plot noise-study noise-study-plot faults faults-plot quickstart \
-        hw hw-sim all clean
+        correlated-speed correlated-plot noise-study noise-study-plot predecoder predecoder-plot \
+        faults faults-plot quickstart hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
@@ -93,6 +93,12 @@ noise-study-plot:  ## redraw results/noise_study.png
 $(RCM):  # the CZ circuits with SI1000 noise of arXiv:2610.26785 (Apache-2.0)
 	git clone --quiet https://github.com/cesar-hernando/regularized-correlated-matching $(RCM)
 	git -C $(RCM) checkout --quiet $(RCM_COMMIT)
+
+predecoder:  ## shots the predecoder settles alone, accuracy and time, d = 3 to 13 (~15 min, idle machine)
+	$(PY) python/predecoder_benchmark.py && $(PY) python/predecoder_benchmark.py --plot
+
+predecoder-plot:  ## redraw results/predecoder.png
+	$(PY) python/predecoder_benchmark.py --plot
 
 faults:  ## exhaustive fault enumeration, d = 3 and 5: which pairs each decoder gets wrong (~6 min)
 	$(PY) python/fault_distance.py

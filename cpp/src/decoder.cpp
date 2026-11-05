@@ -530,6 +530,19 @@ DecodeResult UnionFindDecoder::decode_detailed(const std::vector<int32_t>& fired
 
 uint64_t UnionFindDecoder::solve(const int32_t* fired, std::size_t count,
                                  std::vector<int32_t>* correction) {
+    if (predecode_ != Predecode::Off && predecode_shot(fired, count)) {
+        uint64_t obs = 0;
+        for (int32_t e : plocal_) obs ^= edge_obs_[e];
+        if (correction) correction->insert(correction->end(), plocal_.begin(), plocal_.end());
+        if (presidual_.empty()) {
+            ++stats_.predecoded;
+            steps_ = 0;
+            if (!rules_.empty()) first_ = plocal_;
+            return obs;
+        }
+        // Partial: Union-Find on what is left (never correlated here).
+        return obs ^ run(presidual_.data(), presidual_.size(), correction);
+    }
     if (rules_.empty()) return run(fired, count, correction);
     first_.clear();
     run(fired, count, &first_);
@@ -537,6 +550,125 @@ uint64_t UnionFindDecoder::solve(const int32_t* fired, std::size_t count,
     const uint64_t obs = run(fired, count, correction);
     undo_rules();
     return obs;
+}
+
+// ---------------------------------------------------------------------------
+// UnionFindDecoder: predecoder
+// ---------------------------------------------------------------------------
+
+void UnionFindDecoder::set_predecode(Predecode mode) {
+    predecode_ = mode;
+    const bool on = mode != Predecode::Off;
+    const int32_t n = g_.num_detectors();
+    pstate_.assign(on ? static_cast<std::size_t>(g_.num_nodes()) : 0, 0);
+    pboundary_.assign(on ? static_cast<std::size_t>(n) : 0, -1);
+    near_offset_.assign(on ? static_cast<std::size_t>(n) + 1 : 0, 0);
+    near_.clear();
+    if (!on) return;
+    // Per detector: its lightest boundary edge (adjacency is sorted by
+    // weight), and every other detector within two edges, so that a shot's
+    // isolation test reads one short list per defect.
+    std::vector<int32_t> mark(static_cast<std::size_t>(n), -1);
+    for (int32_t v = 0; v < n; ++v) {
+        const AdjEntry* end = sadj_.data() + sadj_offset_[v + 1];
+        for (const AdjEntry* it = sadj_.data() + sadj_offset_[v]; it != end; ++it) {
+            const int32_t y = it->other;
+            if (y == boundary_) {
+                if (pboundary_[v] < 0) pboundary_[v] = it->edge;
+                continue;
+            }
+            if (mark[y] != v) {
+                mark[y] = v;
+                near_.push_back(y);
+            }
+            const AdjEntry* yend = sadj_.data() + sadj_offset_[y + 1];
+            for (const AdjEntry* jt = sadj_.data() + sadj_offset_[y]; jt != yend; ++jt) {
+                const int32_t z = jt->other;
+                if (z != boundary_ && z != v && mark[z] != v) {
+                    mark[z] = v;
+                    near_.push_back(z);
+                }
+            }
+        }
+        near_offset_[v + 1] = static_cast<int32_t>(near_.size());
+    }
+}
+
+// No defect within two edges of v, apart from its partner (-1 for none).
+bool UnionFindDecoder::clear_two_hops(int32_t v, int32_t partner) const {
+    const int32_t* end = near_.data() + near_offset_[v + 1];
+    for (const int32_t* it = near_.data() + near_offset_[v]; it != end; ++it) {
+        if (pstate_[*it] && *it != partner) return false;
+    }
+    return true;
+}
+
+bool UnionFindDecoder::predecode_shot(const int32_t* fired, std::size_t count) {
+    const int32_t n = g_.num_detectors();
+    for (std::size_t i = 0; i < count; ++i) {
+        if (fired[i] < 0 || fired[i] >= n) {
+            for (std::size_t j = 0; j < i; ++j) pstate_[fired[j]] = 0;
+            throw std::out_of_range("detector id out of range");
+        }
+        pstate_[fired[i]] ^= 1;   // a detector listed twice cancels out
+    }
+    // Correlated decoding needs the whole first pass, so Partial acts as Lazy.
+    const bool partial = predecode_ == Predecode::Partial && rules_.empty();
+    plocal_.clear();
+    presidual_.clear();
+    bool ok = true;
+    uint64_t settled = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const int32_t u = fired[i];
+        if (pstate_[u] != 1) continue;   // cancelled out, or already decided
+        // The lightest edge to a defect names u's partner; clear_two_hops
+        // then rejects any second defect nearby.
+        int32_t partner = -1, pair_edge = -1;
+        const AdjEntry* end = sadj_.data() + sadj_offset_[u + 1];
+        for (const AdjEntry* it = sadj_.data() + sadj_offset_[u]; it != end; ++it) {
+            if (it->other != boundary_ && pstate_[it->other]) {
+                partner = it->other;
+                pair_edge = it->edge;
+                break;
+            }
+        }
+        const int32_t bu = pboundary_[u];
+        bool local;
+        if (partner >= 0) {
+            const int32_t bv = pboundary_[partner];
+            local = pstate_[partner] == 1 && clear_two_hops(u, partner) &&
+                    clear_two_hops(partner, u) &&
+                    !(bu >= 0 && bv >= 0 &&
+                      topo_[pair_edge].weight > topo_[bu].weight + topo_[bv].weight);
+            if (local) {
+                plocal_.push_back(pair_edge);
+                pstate_[u] = pstate_[partner] = 2;
+                settled += 2;
+            }
+        } else {
+            local = bu >= 0 && clear_two_hops(u, -1);
+            if (local) {
+                plocal_.push_back(bu);
+                pstate_[u] = 2;
+                settled += 1;
+            }
+        }
+        if (!local) {
+            if (!partial) {
+                ok = false;
+                break;
+            }
+            pstate_[u] = 3;   // left for Union-Find
+            presidual_.push_back(u);
+        }
+    }
+    for (std::size_t i = 0; i < count; ++i) pstate_[fired[i]] = 0;
+    if (!ok) {
+        plocal_.clear();
+        return false;
+    }
+    stats_.predecoded_defects += settled;
+    return true;
 }
 
 // Every edge of the first pass lowers the weights its rules name. Only node

@@ -58,6 +58,14 @@ v0.5 done:
       inflation and idle time
 - [x] 26 mutants, all killed
 
+Since v0.5:
+- [x] Predecoder in front of Union-Find, lazy (all or nothing, after Delfosse)
+      and partial: lazy settles 90% of shots at d = 5 and p = 0.1% and never
+      changed an answer on 9,000,000 shots; partial is faster at low p but
+      costs accuracy at p = 0.3%
+- [x] Noise study: Stim's decomposition against the X/Z split with CX or CZ
+      gates, uniform or SI1000 noise; the X/Z split wins in all eight
+
 Next:
 - [x] Rerun `make scaling` on the 4-core laptop: at 4 threads each window
       runs 1.6 to 1.7 times slower than alone (work inflation, flat in the

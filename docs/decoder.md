@@ -413,7 +413,51 @@ against plain PyMatching. Against correlated PyMatching it is level at d = 5
 and 9, and faster from d = 13: 4.2 against 5.8 µs per round at d = 17 and
 p = 0.1% (`results/correlated_speed.csv`, one core).
 
-## 10. Limits
+## 10. Predecoder
+
+At low error rates most shots are easy: no defect at all, or a few defects
+that each come from one isolated fault. A predecoder settles those locally and
+sends only the rest to the main decoder. In hardware that is the point: the
+shots it settles never leave the readout electronics, which cuts the bandwidth
+and the number of decoding units (Delfosse's lazy decoder).
+
+`predecode=` puts one in front of Union-Find. A defect is settled if it is
+isolated, meaning no other defect within two edges apart from its partner,
+and either
+
+- pairs with an adjacent defect, through their lightest edge, unless sending
+  both ends to the boundary is strictly lighter; or
+- sits alone next to the boundary, through its lightest boundary edge.
+
+`"lazy"` settles a shot only if every defect is settled, and otherwise hands
+the whole shot to Union-Find unchanged, so it can only change an answer on a
+shot it settles alone. `"partial"` settles the isolated defects of every shot
+and runs Union-Find on the rest. Each detector's lightest boundary edge and
+the detectors within two edges of it are precomputed, so a defect costs one
+scan of a short list. With correlated decoding, a lazy shot is settled before
+both passes, and `"partial"` acts as `"lazy"`.
+
+**No distance lost.** The settled edges differ from the true faults by short
+cycles of the decoding graph: two adjacent defects come from one fault
+between them, or from two faults through a third detector, and a defect alone
+at the boundary from one boundary fault. On the d = 5 circuit, both modes
+decode every single fault and every one of the 1,906,128 pairs of faults
+correctly (`tests/test_backlog.py`), as plain Union-Find does.
+
+**What it buys** (`make predecoder`, `results/predecoder.png`). The lazy mode
+never changed an answer, 0 out of 9,000,000 shots from d = 3 to 13 and
+p = 0.05% to 0.3%. It settles 99% of shots at d = 3 and 66% at d = 7 at
+p = 0.1%, and is up to 1.9 times faster than Union-Find alone at small
+distance; once it settles few shots (d = 11 and up at p = 0.1%), trying
+costs up to 8%. The partial mode takes 54 to 97% of the defects off
+Union-Find at p = 0.1% and below and is 1.1 to 1.9 times faster there, but
+it changes answers (up to 12% more logical errors at p = 0.3%), because
+Union-Find no longer sees the settled defects next to the clusters it grows.
+The time saved is much smaller than the share of defects settled: an isolated
+pair is cheap for an event-driven Union-Find too, and the time goes into the
+dense clusters that a local rule has to leave alone.
+
+## 11. Limits
 
 - Graphlike error models only: hyperedges must be decomposed, which Stim
   does with `decompose_errors=True`. When two parallel edges flip different
@@ -454,6 +498,8 @@ p = 0.1% (`results/correlated_speed.csv`, one core).
   decoders with parallelization in time*, PRX Quantum 4, 040344 (2023)
 - A. G. Fowler, *Optimal complexity correction of correlated errors in the
   surface code*, arXiv:1310.0863 (2013)
+- N. Delfosse, *Hierarchical decoding to reduce hardware requirements for
+  quantum computing*, arXiv:2001.11427 (2020)
 - O. Higgott and C. Gidney, *Sparse Blossom: correcting a million errors per
   core second with minimum-weight matching*, Quantum 9, 1600 (2025);
   correlated matching in PyMatching since version 2.3

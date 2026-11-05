@@ -204,6 +204,133 @@ void test_fuzz_fast_equals_reference(int num_graphs, int shots_per_graph) {
                 cases, mismatches);
 }
 
+// The predecoder settles isolated pairs and lone defects next to the
+// boundary, and hands everything else to Union-Find. Chain B - D0 - D1 - D2 - B.
+void test_predecoder_basics() {
+    UnionFindDecoder dec(DecodingGraph(3, 1, chain_edges(), Weighting::Uniform));
+    dec.set_predecode(Predecode::Lazy);
+    CHECK(dec.predecode() == Predecode::Lazy);
+    struct Case {
+        std::vector<int32_t> fired;
+        bool settled;
+        std::vector<int32_t> correction;   // when settled
+    };
+    const std::vector<Case> cases = {
+        {{}, true, {}},
+        {{0}, true, {0}},          // alone next to the boundary
+        {{0, 1}, true, {1}},       // an adjacent pair, D1 has no boundary edge
+        {{2, 1}, true, {2}},
+        {{1, 1}, true, {}},        // listed twice: no defect
+        {{1}, false, {}},          // alone, but not next to the boundary
+        {{0, 2}, false, {}},       // two defects two edges apart
+        {{0, 1, 2}, false, {}},    // D1 has two defect neighbours
+    };
+    UnionFindDecoder plain(DecodingGraph(3, 1, chain_edges(), Weighting::Uniform));
+    for (const Case& c : cases) {
+        const uint64_t before = dec.stats().predecoded;
+        const DecodeResult r = dec.decode_detailed(c.fired);
+        const bool settled = dec.stats().predecoded == before + 1;
+        CHECK(settled == c.settled);
+        CHECK(r.syndrome_ok);
+        if (c.settled) {
+            CHECK(r.correction == c.correction);
+        } else {
+            const DecodeResult u = plain.decode_detailed(c.fired);
+            CHECK(r.correction == u.correction);
+            CHECK(r.observables == u.observables);
+        }
+    }
+    bool threw = false;
+    try {
+        dec.decode({0, 7});
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    CHECK(threw);
+    CHECK(dec.decode({0}) == 0);   // state left clean after the throw
+}
+
+// A pair whose edge is heavier than sending both ends to the boundary is
+// left to Union-Find: B -1- D0 -9- D1 -1- B.
+void test_predecoder_prefers_the_boundary() {
+    std::vector<Edge> e = {edge(0, 2), edge(0, 1), edge(1, 2, 1)};
+    UnionFindDecoder dec(DecodingGraph(2, 1, e, std::vector<int32_t>{1, 9, 1}));
+    dec.set_predecode(Predecode::Lazy);
+    const DecodeResult r = dec.decode_detailed({0, 1});
+    CHECK(dec.stats().predecoded == 0);
+    CHECK(r.correction.size() == 2);   // both ends to the boundary
+    CHECK(r.observables == 1);
+}
+
+// Partial: the isolated pair D0 D1 is settled, Union-Find takes D5 and D7.
+// Chain B - D0 - ... - D7 - B, edge k joins D(k-1) and Dk.
+void test_partial_predecoder() {
+    std::vector<Edge> e = {edge(0, 8, 1)};
+    for (int32_t k = 1; k < 8; ++k) e.push_back(edge(k - 1, k));
+    e.push_back(edge(7, 8));
+    UnionFindDecoder dec(DecodingGraph(8, 1, e, Weighting::Uniform));
+    dec.set_predecode(Predecode::Partial);
+    const DecodeResult r = dec.decode_detailed({7, 1, 5, 0});
+    CHECK(r.syndrome_ok);
+    CHECK(dec.stats().predecoded == 0);
+    CHECK(dec.stats().predecoded_defects == 2);
+    CHECK(r.correction.size() == 3);
+    CHECK(r.correction[0] == 1);   // the pair, first
+    CHECK(r.observables == 0);
+    // Lazy leaves that shot to Union-Find whole.
+    dec.set_predecode(Predecode::Lazy);
+    UnionFindDecoder plain(DecodingGraph(8, 1, e, Weighting::Uniform));
+    CHECK(dec.decode_detailed({7, 1, 5, 0}).correction ==
+          plain.decode_detailed({7, 1, 5, 0}).correction);
+}
+
+// On random graphs, for both modes: every correction explains the syndrome,
+// and a shot the predecoder leaves alone gets exactly Union-Find's answer.
+void test_predecoder_fuzz(int num_graphs, int shots_per_graph, Predecode mode) {
+    std::mt19937_64 rng(20261105);
+    long long cases = 0, settled = 0, partly = 0;
+    for (int gi = 0; gi < num_graphs; ++gi) {
+        DecodingGraph g = random_graph(rng, gi % 3 == 0, gi % 4 == 1);
+        UnionFindDecoder pre(g);
+        pre.set_predecode(mode);
+        UnionFindDecoder plain(g);
+        std::uniform_real_distribution<double> unit(0.0, 1.0);
+        const double q = 0.01 + 0.2 * unit(rng);
+        for (int s = 0; s < shots_per_graph; ++s) {
+            std::vector<uint8_t> flip(g.num_nodes(), 0);
+            for (const Edge& e : g.edges()) {
+                if (unit(rng) < q) {
+                    flip[e.a] ^= 1;
+                    flip[e.b] ^= 1;
+                }
+            }
+            std::vector<int32_t> fired;
+            for (int32_t v = 0; v < g.num_detectors(); ++v) {
+                if (flip[v]) fired.push_back(v);
+            }
+            std::shuffle(fired.begin(), fired.end(), rng);
+            const uint64_t before = pre.stats().predecoded;
+            const uint64_t defects_before = pre.stats().predecoded_defects;
+            const DecodeResult r = pre.decode_detailed(fired);
+            ++cases;
+            CHECK(r.syndrome_ok);
+            if (pre.stats().predecoded == before + 1) {
+                ++settled;
+            } else if (pre.stats().predecoded_defects > defects_before) {
+                ++partly;
+                CHECK(mode == Predecode::Partial);
+            } else {
+                const DecodeResult u = plain.decode_detailed(fired);
+                CHECK(r.observables == u.observables);
+                CHECK(r.correction == u.correction);
+            }
+            CHECK(pre.decode(fired) == r.observables);
+        }
+    }
+    std::printf("predecoder fuzz (%s): %lld random cases, %lld settled whole, %lld in part\n",
+                mode == Predecode::Lazy ? "lazy" : "partial", cases, settled, partly);
+}
+
 // Random reweighting rules: each edge names a few partners, each with a weight
 // below the partner's own (a rule that would not lower it never fires).
 ReweightRules random_rules(std::mt19937_64& rng, const DecodingGraph& g) {
@@ -642,6 +769,11 @@ int main() {
     test_unexplainable_syndrome();
     test_batch_matches_single_shots();
     test_fuzz_fast_equals_reference(3000, 25);
+    test_predecoder_basics();
+    test_predecoder_prefers_the_boundary();
+    test_partial_predecoder();
+    test_predecoder_fuzz(3000, 25, Predecode::Lazy);
+    test_predecoder_fuzz(3000, 25, Predecode::Partial);
     test_correlated_decision();
     test_reweight_rules_from_probabilities();
     test_correlated_fuzz(3000, 25);
