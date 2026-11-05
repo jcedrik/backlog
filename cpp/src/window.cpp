@@ -353,7 +353,7 @@ public:
         std::exception_ptr error;
         {
             std::lock_guard<std::mutex> lock(m_);
-            error.swap(error_);
+            std::swap(error, error_);
         }
         if (error) std::rethrow_exception(error);
     }
