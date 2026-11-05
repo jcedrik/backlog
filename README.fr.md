@@ -284,10 +284,11 @@ par point, expériences mémoire complètes de d rondes :
 ### Matériel (v0 : 1D, non pondéré)
 
 Cœur Union-Find en VHDL, exact bit à bit contre son modèle de référence sur
-plus de 6 000 vecteurs (N = 8, 16, 32). Après placement-routage sur un iCE40
-HX8K : 94,5 MHz à N = 8, environ 10,6 ns par ronde de croissance. La Fmax
-baisse avec N, et la cause est identifiée : des chaînes XOR en série, à
-remplacer par un préfixe parallèle. [Détails](hardware/README.md).
+plus de 10 000 vecteurs (N = 8 à 128). La parité des grappes vient d'un
+préfixe parallèle de Kogge-Stone, donc l'horloge tient quand la chaîne
+grandit : après placement-routage sur un iCE40 HX8K, 101 MHz à N = 8 et
+encore 41 MHz à N = 128, là où les chaînes en série de la première version
+tombent à 9,8 MHz. [Détails](hardware/README.md).
 
 ## Utilisation
 

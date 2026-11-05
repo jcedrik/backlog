@@ -17,13 +17,22 @@ use std.textio.all;
 
 entity tb_uf_decoder_1d is
   generic (
-    N       : positive := 8;
-    VECTORS : string   := "tb/vectors_n8.txt"
+    N        : positive := 8;
+    VECTORS  : string   := "build/vectors_n8.txt";
+    PARALLEL : boolean  := true
   );
 end entity tb_uf_decoder_1d;
 
 architecture sim of tb_uf_decoder_1d is
   constant CLK_PERIOD : time := 10 ns;
+
+  function scan_name return string is
+  begin
+    if PARALLEL then
+      return "parallel";
+    end if;
+    return "ripple";
+  end function;
 
   signal clk        : std_logic := '0';
   signal rst        : std_logic := '1';
@@ -39,7 +48,7 @@ begin
   clk <= not clk after CLK_PERIOD / 2;
 
   dut : entity work.uf_decoder_1d
-    generic map (N => N)
+    generic map (N => N, PARALLEL => PARALLEL)
     port map (
       clk        => clk,
       rst        => rst,
@@ -135,6 +144,7 @@ begin
     end loop;
 
     report "N=" & integer'image(N)
+         & " " & scan_name
          & " tests=" & integer'image(n_tests)
          & " mismatches=" & integer'image(n_mismatch)
          & " invariant_failures=" & integer'image(n_inv_fail)

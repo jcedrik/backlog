@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- VHDL core: cluster parity and boundary contact from a Kogge-Stone parallel
+  prefix scan instead of ripple chains (`PARALLEL => true`, the default). Same
+  outputs bit for bit, now checked from N = 8 to 128; on the iCE40, Fmax at
+  N = 128 goes from 9.8 to 41 MHz for twice the LUTs. `run_hw.sh` measures
+  both versions behind a serial I/O harness, best of 3 placement seeds, and
+  writes `hardware/fmax.csv` and `hardware/fmax.png`.
+- `make noise-study`: Stim's decomposition against the X/Z split with CX or CZ
+  gates, under uniform or SI1000 noise. The X/Z split wins in all eight
+  settings; the gap is smallest with CZ gates and SI1000.
+- `make faults` and `make correlated` work again after a plain `make install`.
+
 ## 0.5.0 (2026-11-05)
 
 - Correlated (two-pass) decoding in the whole-shot, sliding-window and

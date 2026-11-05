@@ -77,12 +77,13 @@ Next:
 ## Phase 3: hardware (1D done)
 
 Done:
-- Golden model, VHDL RTL, self-checking testbench, bit-exact at N = 8, 16, 32
+- Golden model, VHDL RTL, self-checking testbench, bit-exact at N = 8 to 128
 - Synthesis (ghdl + yosys) and place and route (nextpnr, iCE40 HX8K)
 - Measured bottleneck: ripple prefix/suffix chains, Fmax drops with N
+- Kogge-Stone segmented prefix scan, O(log N) logic per growth round: at
+  N = 128, Fmax from 9.8 to 41 MHz on the iCE40 for twice the LUTs
 
 Next:
-- [ ] Parallel segmented prefix scan, O(log N) depth per round
 - [ ] Weighted growth in hardware (integer lengths, as in the C++ decoder)
 - [ ] 2D surface code core (d = 3, then 5) with the time dimension, vectors
       from Stim through the C++ decoder as golden model

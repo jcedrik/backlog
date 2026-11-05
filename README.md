@@ -267,11 +267,11 @@ whole memory experiments of d rounds:
 
 ### Hardware (v0: 1D, unweighted)
 
-Union-Find core in VHDL, bit-exact against its golden model on 6,000+ vectors
-(N = 8, 16, 32). After place and route on an iCE40 HX8K: 94.5 MHz at N = 8,
-about 10.6 ns per growth round. Fmax drops with N, and the cause is
-identified: ripple XOR chains, fixable with a parallel prefix scan.
-[Details](hardware/README.md).
+Union-Find core in VHDL, bit-exact against its golden model on 10,000+
+vectors (N = 8 to 128). Cluster parity comes from a Kogge-Stone parallel
+prefix scan, so the clock holds up as the chain grows: after place and route
+on an iCE40 HX8K, 101 MHz at N = 8 and still 41 MHz at N = 128, where the
+first version's ripple chains fall to 9.8 MHz. [Details](hardware/README.md).
 
 ## Use it
 
