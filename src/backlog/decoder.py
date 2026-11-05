@@ -10,7 +10,8 @@ from ._core import ParallelWindowDecoder as _CoreParallel
 from ._core import ReferenceDecoder as _CoreReference
 from ._core import SlidingWindowDecoder as _CoreWindow
 from ._core import UnionFindDecoder as _CoreDecoder
-from .dem import GraphEdges, dem_to_edges, detector_layers
+from .dem import (Correlations, GraphEdges, decompose_by_basis, dem_correlations, dem_to_edges,
+                  detector_layers)
 
 
 def _mask_to_bits(mask: int, num_observables: int) -> np.ndarray:
@@ -19,6 +20,33 @@ def _mask_to_bits(mask: int, num_observables: int) -> np.ndarray:
 
 def _fired_ids(syndrome) -> list[int]:
     return np.flatnonzero(np.asarray(syndrome)).astype(np.int32).tolist()
+
+
+def _corr_kwargs(correlations: Correlations | None, alpha: float) -> dict:
+    if correlations is None:
+        return {}
+    return dict(corr_offset=correlations.offset, corr_target=correlations.target,
+                corr_conditional=correlations.conditional, alpha=float(alpha))
+
+
+def _graph_and_correlations(dem: stim.DetectorErrorModel, correlated: bool,
+                            decompose: str = "basis"):
+    """Edges and, for correlated decoding, the correlation table.
+
+    Correlated decoding re-decomposes the model by stabilizer type first
+    (decompose="basis"), which is what makes the correlations informative; it
+    falls back to the model as given if that is impossible (another layout).
+    decompose="as-is" keeps the model's own decomposition.
+    """
+    if correlated and decompose == "basis":
+        try:
+            dem = decompose_by_basis(dem)
+        except ValueError:
+            pass
+    elif decompose not in ("basis", "as-is"):
+        raise ValueError('decompose must be "basis" or "as-is"')
+    edges = dem_to_edges(dem)
+    return edges, (dem_correlations(dem, edges) if correlated else None)
 
 
 @dataclass(frozen=True)
@@ -40,6 +68,11 @@ class _Decoder:
     @property
     def num_observables(self) -> int:
         return self._core.num_observables
+
+    @property
+    def correlated(self) -> bool:
+        """True if every shot is decoded in two correlated passes."""
+        return bool(self._core.correlated)
 
     def decode(self, syndrome) -> np.ndarray:
         """Bool array over detectors -> bool array over observables."""
@@ -69,24 +102,49 @@ class UnionFindDecoder(_Decoder):
 
     weighted=True grows edges in proportion to ln((1-p)/p), so likely errors
     are matched first. weighted=False is the classic unweighted decoder.
+
+    correlations (or correlated=True in from_dem) decodes every shot twice:
+    the edges of the first correction make the edges they come with in
+    decomposed errors cheaper, at probability min(0.5, alpha * P(edge | first
+    edge)), and the second pass decides. alpha = 1 is standard correlated
+    decoding; alpha < 1 is the regularized rule (see regularization_strength).
     """
 
     def __init__(self, edges: GraphEdges, *, weighted: bool = True,
-                 resolution: int = 1024):
+                 resolution: int = 1024, correlations: Correlations | None = None,
+                 alpha: float = 1.0):
         self.edges = edges
         self.weighted = weighted
         self.resolution = resolution
+        self.alpha = alpha
         self._core = _CoreDecoder(edges.num_detectors, edges.num_observables,
                                   edges.a, edges.b, edges.obs, edges.p,
-                                  weighted, resolution)
+                                  weighted, resolution, **_corr_kwargs(correlations, alpha))
 
     @classmethod
-    def from_dem(cls, dem: stim.DetectorErrorModel, **kwargs) -> "UnionFindDecoder":
-        return cls(dem_to_edges(dem), **kwargs)
+    def from_dem(cls, dem: stim.DetectorErrorModel, *, correlated: bool = False,
+                 decompose: str = "basis", **kwargs) -> "UnionFindDecoder":
+        edges, corr = _graph_and_correlations(dem, correlated, decompose)
+        return cls(edges, correlations=corr, **kwargs)
 
     @classmethod
     def from_circuit(cls, circuit: stim.Circuit, **kwargs) -> "UnionFindDecoder":
         return cls.from_dem(circuit.detector_error_model(decompose_errors=True), **kwargs)
+
+    @property
+    def rules(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Reweighting rules (offset, target, weight) on the decoder's weight scale."""
+        o, t, w = self._core.rules
+        return (np.asarray(o, dtype=np.int32), np.asarray(t, dtype=np.int32),
+                np.asarray(w, dtype=np.int32))
+
+    @property
+    def last_first_pass(self) -> np.ndarray:
+        """Edge ids of the last shot's first pass (correlated decoding)."""
+        return np.asarray(self._core.last_first_pass, dtype=np.int32)
+
+    def weight_for_probability(self, p: float) -> int:
+        return int(self._core.weight_for_probability(p))
 
     @property
     def num_edges(self) -> int:
@@ -123,22 +181,27 @@ class SlidingWindowDecoder(_Decoder):
     """
 
     def __init__(self, edges: GraphEdges, layers, *, commit: int, buffer: int,
-                 weighted: bool = True, resolution: int = 1024):
+                 weighted: bool = True, resolution: int = 1024,
+                 correlations: Correlations | None = None, alpha: float = 1.0):
         self.edges = edges
         self.commit = commit
         self.buffer = buffer
         self.weighted = weighted
         self.resolution = resolution
+        self.alpha = alpha
         self._core = _CoreWindow(edges.num_detectors, edges.num_observables,
                                  edges.a, edges.b, edges.obs, edges.p,
                                  np.ascontiguousarray(layers, dtype=np.int32),
-                                 commit, buffer, weighted, resolution)
+                                 commit, buffer, weighted, resolution,
+                                 **_corr_kwargs(correlations, alpha))
 
     @classmethod
     def from_dem(cls, dem: stim.DetectorErrorModel, *, commit: int, buffer: int,
+                 correlated: bool = False, decompose: str = "basis",
                  **kwargs) -> "SlidingWindowDecoder":
-        return cls(dem_to_edges(dem), detector_layers(dem), commit=commit,
-                   buffer=buffer, **kwargs)
+        edges, corr = _graph_and_correlations(dem, correlated, decompose)
+        return cls(edges, detector_layers(dem), commit=commit, buffer=buffer,
+                   correlations=corr, **kwargs)
 
     @classmethod
     def from_circuit(cls, circuit: stim.Circuit, *, commit: int, buffer: int,
@@ -190,24 +253,28 @@ class ParallelWindowDecoder(_Decoder):
 
     def __init__(self, edges: GraphEdges, layers, *, commit: int, buffer: int,
                  seam: int | None = None, threads: int = 1, weighted: bool = True,
-                 resolution: int = 1024):
+                 resolution: int = 1024, correlations: Correlations | None = None,
+                 alpha: float = 1.0):
         self.edges = edges
         self.commit = commit
         self.buffer = buffer
         self.seam = buffer if seam is None else seam
         self.weighted = weighted
         self.resolution = resolution
+        self.alpha = alpha
         self._core = _CoreParallel(edges.num_detectors, edges.num_observables,
                                    edges.a, edges.b, edges.obs, edges.p,
                                    np.ascontiguousarray(layers, dtype=np.int32),
                                    commit, buffer, max(1, self.seam), threads,
-                                   weighted, resolution)
+                                   weighted, resolution, **_corr_kwargs(correlations, alpha))
 
     @classmethod
     def from_dem(cls, dem: stim.DetectorErrorModel, *, commit: int, buffer: int,
+                 correlated: bool = False, decompose: str = "basis",
                  **kwargs) -> "ParallelWindowDecoder":
-        return cls(dem_to_edges(dem), detector_layers(dem), commit=commit,
-                   buffer=buffer, **kwargs)
+        edges, corr = _graph_and_correlations(dem, correlated, decompose)
+        return cls(edges, detector_layers(dem), commit=commit, buffer=buffer,
+                   correlations=corr, **kwargs)
 
     @classmethod
     def from_circuit(cls, circuit: stim.Circuit, *, commit: int, buffer: int,

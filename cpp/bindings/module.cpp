@@ -15,6 +15,7 @@ using backlog::DecodeResult;
 using backlog::DecodingGraph;
 using backlog::Edge;
 using backlog::ReferenceDecoder;
+using backlog::ReweightRules;
 using backlog::ParallelWindowDecoder;
 using backlog::SlidingWindowDecoder;
 using backlog::UnionFindDecoder;
@@ -47,6 +48,28 @@ DecodingGraph make_graph(int32_t n, int32_t m, const I32& a, const I32& b,
                          resolution);
 }
 
+// Correlation table (CSR over edges: offset, target, P(target | edge)) ->
+// reweighting rules on this graph's weight scale. No table: no rules.
+ReweightRules make_rules(const DecodingGraph& g, const py::object& offset,
+                         const py::object& target, const py::object& conditional,
+                         double alpha) {
+    if (offset.is_none() && target.is_none() && conditional.is_none()) return {};
+    if (offset.is_none() || target.is_none() || conditional.is_none()) {
+        throw std::invalid_argument("corr_offset, corr_target and corr_conditional go together");
+    }
+    const I32 o = offset.cast<I32>();
+    const I32 t = target.cast<I32>();
+    const F64 c = conditional.cast<F64>();
+    return backlog::make_reweight_rules(
+        g, std::vector<int32_t>(o.data(), o.data() + o.size()),
+        std::vector<int32_t>(t.data(), t.data() + t.size()),
+        std::vector<double>(c.data(), c.data() + c.size()), alpha);
+}
+
+py::tuple rules_tuple(const ReweightRules& r) {
+    return py::make_tuple(r.offset, r.target, r.weight);
+}
+
 py::tuple to_tuple(const DecodeResult& r) {
     return py::make_tuple(r.observables, r.correction, r.syndrome_ok);
 }
@@ -67,13 +90,25 @@ PYBIND11_MODULE(_core, mod) {
     py::class_<UnionFindDecoder>(mod, "UnionFindDecoder")
         .def(py::init([](int32_t n, int32_t m, const I32& a, const I32& b,
                          const U64& obs, const F64& p, bool weighted,
-                         int32_t resolution) {
-                 return std::make_unique<UnionFindDecoder>(
-                     make_graph(n, m, a, b, obs, p, weighted, resolution));
+                         int32_t resolution, const py::object& corr_offset,
+                         const py::object& corr_target, const py::object& corr_conditional,
+                         double alpha) {
+                 DecodingGraph g = make_graph(n, m, a, b, obs, p, weighted, resolution);
+                 ReweightRules rules = make_rules(g, corr_offset, corr_target, corr_conditional, alpha);
+                 return std::make_unique<UnionFindDecoder>(std::move(g), std::move(rules));
              }),
              py::arg("num_detectors"), py::arg("num_observables"), py::arg("a"),
              py::arg("b"), py::arg("obs"), py::arg("p"), py::arg("weighted") = true,
-             py::arg("resolution") = 1024)
+             py::arg("resolution") = 1024, py::arg("corr_offset") = py::none(),
+             py::arg("corr_target") = py::none(), py::arg("corr_conditional") = py::none(),
+             py::arg("alpha") = 1.0)
+        .def_property_readonly("correlated", &UnionFindDecoder::correlated)
+        .def_property_readonly("rules",
+                               [](const UnionFindDecoder& d) { return rules_tuple(d.reweight_rules()); })
+        .def_property_readonly("last_first_pass", &UnionFindDecoder::last_first_pass)
+        .def("weight_for_probability",
+             [](const UnionFindDecoder& d, double p) { return d.graph().weight_for_probability(p); },
+             py::arg("p"))
         .def_property_readonly("num_detectors",
                                [](const UnionFindDecoder& d) { return d.graph().num_detectors(); })
         .def_property_readonly("num_observables",
@@ -93,6 +128,7 @@ PYBIND11_MODULE(_core, mod) {
                  out["full_edges"] = s.full_edges;
                  out["edge_reschedules"] = s.edge_reschedules;
                  out["events_popped"] = s.events_popped;
+                 out["reweighted_edges"] = s.reweighted_edges;
                  return out;
              })
         .def("reset_stats", &UnionFindDecoder::reset_stats)
@@ -142,19 +178,25 @@ PYBIND11_MODULE(_core, mod) {
         .def(py::init([](int32_t n, int32_t m, const I32& a, const I32& b,
                          const U64& obs, const F64& p, const I32& layers,
                          int32_t commit, int32_t buffer, bool weighted,
-                         int32_t resolution) {
+                         int32_t resolution, const py::object& corr_offset,
+                         const py::object& corr_target, const py::object& corr_conditional,
+                         double alpha) {
                  if (layers.size() != n) {
                      throw std::invalid_argument("need one layer per detector");
                  }
                  std::vector<int32_t> layer(layers.data(), layers.data() + layers.size());
-                 return std::make_unique<SlidingWindowDecoder>(
-                     make_graph(n, m, a, b, obs, p, weighted, resolution),
-                     std::move(layer), commit, buffer);
+                 DecodingGraph g = make_graph(n, m, a, b, obs, p, weighted, resolution);
+                 ReweightRules rules = make_rules(g, corr_offset, corr_target, corr_conditional, alpha);
+                 return std::make_unique<SlidingWindowDecoder>(std::move(g), std::move(layer),
+                                                               commit, buffer, std::move(rules));
              }),
              py::arg("num_detectors"), py::arg("num_observables"), py::arg("a"),
              py::arg("b"), py::arg("obs"), py::arg("p"), py::arg("layers"),
              py::arg("commit"), py::arg("buffer"), py::arg("weighted") = true,
-             py::arg("resolution") = 1024)
+             py::arg("resolution") = 1024, py::arg("corr_offset") = py::none(),
+             py::arg("corr_target") = py::none(), py::arg("corr_conditional") = py::none(),
+             py::arg("alpha") = 1.0)
+        .def_property_readonly("correlated", &SlidingWindowDecoder::correlated)
         .def_property_readonly("num_detectors",
                                [](const SlidingWindowDecoder& d) { return d.graph().num_detectors(); })
         .def_property_readonly("num_observables",
@@ -220,19 +262,26 @@ PYBIND11_MODULE(_core, mod) {
         .def(py::init([](int32_t n, int32_t m, const I32& a, const I32& b,
                          const U64& obs, const F64& p, const I32& layers,
                          int32_t commit, int32_t buffer, int32_t seam, int32_t threads,
-                         bool weighted, int32_t resolution) {
+                         bool weighted, int32_t resolution, const py::object& corr_offset,
+                         const py::object& corr_target, const py::object& corr_conditional,
+                         double alpha) {
                  if (layers.size() != n) {
                      throw std::invalid_argument("need one layer per detector");
                  }
                  std::vector<int32_t> layer(layers.data(), layers.data() + layers.size());
-                 return std::make_unique<ParallelWindowDecoder>(
-                     make_graph(n, m, a, b, obs, p, weighted, resolution),
-                     std::move(layer), commit, buffer, seam, threads);
+                 DecodingGraph g = make_graph(n, m, a, b, obs, p, weighted, resolution);
+                 ReweightRules rules = make_rules(g, corr_offset, corr_target, corr_conditional, alpha);
+                 return std::make_unique<ParallelWindowDecoder>(std::move(g), std::move(layer),
+                                                                commit, buffer, seam, threads,
+                                                                std::move(rules));
              }),
              py::arg("num_detectors"), py::arg("num_observables"), py::arg("a"),
              py::arg("b"), py::arg("obs"), py::arg("p"), py::arg("layers"),
              py::arg("commit"), py::arg("buffer"), py::arg("seam"), py::arg("threads"),
-             py::arg("weighted") = true, py::arg("resolution") = 1024)
+             py::arg("weighted") = true, py::arg("resolution") = 1024,
+             py::arg("corr_offset") = py::none(), py::arg("corr_target") = py::none(),
+             py::arg("corr_conditional") = py::none(), py::arg("alpha") = 1.0)
+        .def_property_readonly("correlated", &ParallelWindowDecoder::correlated)
         .def_property_readonly("num_detectors",
                                [](const ParallelWindowDecoder& d) { return d.graph().num_detectors(); })
         .def_property_readonly("num_observables",

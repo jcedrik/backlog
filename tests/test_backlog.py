@@ -225,3 +225,179 @@ def test_sinter_parallel_window_decoder():
         max_shots=2_000, max_errors=500)
     assert stats[0].shots == 2_000
     assert 0 < stats[0].errors < 400
+
+
+# --- Correlated decoding ----------------------------------------------------
+
+def test_correlation_table_of_a_decomposed_y_error():
+    # A Y error seen as an X edge (D0 D1) and a Z edge (D2 D3), plus each edge
+    # on its own: P(D2 D3 | D0 D1) = P(Y) / P(D0 D1).
+    dem = stim.DetectorErrorModel("""
+        error(0.01) D0 D1 ^ D2 D3
+        error(0.02) D0 D1
+        error(0.03) D2 D3 L0
+        error(0.05) D2
+        error(0.05) D3
+        error(0.05) D0
+    """)
+    edges = backlog.dem_to_edges(dem)
+    corr = backlog.dem_correlations(dem, edges)
+    index = {(int(a), int(b)): i for i, (a, b) in enumerate(zip(edges.a, edges.b))}
+    x, z = index[(0, 1)], index[(2, 3)]
+    p_x = 0.01 * 0.98 + 0.02 * 0.99
+    p_z = 0.01 * 0.97 + 0.03 * 0.99
+    rules = {(e, int(corr.target[k])): corr.conditional[k]
+             for e in range(edges.num_edges)
+             for k in range(corr.offset[e], corr.offset[e + 1])}
+    assert rules.keys() == {(x, z), (z, x)}
+    assert rules[(x, z)] == pytest.approx(0.01 / p_x)
+    assert rules[(z, x)] == pytest.approx(0.01 / p_z)
+
+
+def test_correlated_reweighting_follows_the_rule():
+    dem = surface(3, 0.002).detector_error_model(decompose_errors=True)
+    edges = backlog.dem_to_edges(dem)
+    corr = backlog.dem_correlations(dem, edges)
+    for alpha in (1.0, 0.3):
+        dec = backlog.UnionFindDecoder(edges, correlations=corr, alpha=alpha)
+        offset, target, weight = dec.rules
+        kept = 0
+        for e in range(edges.num_edges):
+            for k in range(corr.offset[e], corr.offset[e + 1]):
+                f = int(corr.target[k])
+                w = dec.weight_for_probability(min(0.5, alpha * corr.conditional[k]))
+                if w < dec.weights[f]:
+                    span = target[offset[e]:offset[e + 1]]
+                    j = int(np.flatnonzero(span == f)[0])
+                    assert weight[offset[e] + j] == w
+                    kept += 1
+        assert kept == len(target) > 0
+
+
+def test_tiny_alpha_is_plain_union_find():
+    circuit = surface(5, 0.004)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    edges = backlog.dem_to_edges(dem)
+    corr = backlog.dem_correlations(dem, edges)
+    plain = backlog.UnionFindDecoder(edges)
+    tiny = backlog.UnionFindDecoder(edges, correlations=corr, alpha=1e-9)
+    assert not tiny.correlated
+    dets, _ = sample(circuit, 2000, seed=11)
+    assert np.array_equal(tiny.decode_batch(dets), plain.decode_batch(dets))
+
+
+def test_correlated_union_find_beats_plain_and_tracks_correlated_matching():
+    circuit = surface(5, 0.003)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, obs = sample(circuit, 100_000, seed=12)
+    plain = backlog.UnionFindDecoder.from_dem(dem)
+    corr = backlog.UnionFindDecoder.from_dem(dem, correlated=True)  # split by basis
+    pmc = pymatching.Matching.from_detector_error_model(backlog.decompose_by_basis(dem),
+                                                        enable_correlations=True)
+    e_plain = np.sum(np.any(plain.decode_batch(dets) != obs, axis=1))
+    e_corr = np.sum(np.any(corr.decode_batch(dets) != obs, axis=1))
+    e_pmc = np.sum(np.any(pmc.decode_batch(dets, enable_correlations=True) != obs, axis=1))
+    # Same shots: correlations remove over a third of the errors here (37% on
+    # a million shots); the gate is 15%. Correlated PyMatching does about 6%
+    # better; the gate is 15%.
+    assert e_corr < 0.85 * e_plain
+    assert e_corr < 1.15 * e_pmc
+
+
+def test_correlated_windows_are_exactly_the_whole_shot_decoder():
+    circuit = surface(5, 0.004, rounds=6)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    whole = backlog.UnionFindDecoder.from_dem(dem, correlated=True, alpha=0.5)
+    sliding = backlog.SlidingWindowDecoder.from_dem(dem, commit=7, buffer=0,
+                                                    correlated=True, alpha=0.5)
+    parallel = backlog.ParallelWindowDecoder.from_dem(dem, commit=7, buffer=0, seam=1,
+                                                      threads=2, correlated=True, alpha=0.5)
+    assert whole.correlated and sliding.correlated and parallel.correlated
+    assert sliding.num_windows == 1 and parallel.num_windows == 1
+    dets, _ = sample(circuit, 2000, seed=13)
+    expected = whole.decode_batch(dets)
+    assert np.array_equal(sliding.decode_batch(dets), expected)
+    assert np.array_equal(parallel.decode_batch(dets), expected)
+
+
+def test_correlated_parallel_windows_keep_their_accuracy():
+    circuit = surface(5, 0.003, rounds=30)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    dets, obs = sample(circuit, 20_000, seed=14)
+    whole = backlog.UnionFindDecoder.from_dem(dem, correlated=True)
+    one = backlog.ParallelWindowDecoder.from_dem(dem, commit=5, buffer=5, threads=1,
+                                                 correlated=True)
+    two = backlog.ParallelWindowDecoder.from_dem(dem, commit=5, buffer=5, threads=2,
+                                                 correlated=True)
+    p1 = one.decode_batch(dets)
+    assert np.array_equal(p1, two.decode_batch(dets))
+    e_whole = np.sum(np.any(whole.decode_batch(dets) != obs, axis=1))
+    e_win = np.sum(np.any(p1 != obs, axis=1))
+    assert e_win <= 1.1 * e_whole + 10
+
+
+def fault_symptoms(dem: stim.DetectorErrorModel):
+    """Bit-packed syndrome and logical flip of every fault (error) of a model."""
+    n = dem.num_detectors
+    rows, flips = [], []
+    for inst in dem.flattened():
+        if inst.type != "error":
+            continue
+        row = np.zeros(n, dtype=bool)
+        flip = False
+        for t in inst.targets_copy():
+            if t.is_relative_detector_id():
+                row[t.val] ^= True
+            elif t.is_logical_observable_id():
+                flip ^= True
+        rows.append(np.packbits(row, bitorder="little"))
+        flips.append(flip)
+    return np.array(rows), np.array(flips)
+
+
+def wrong(decoder, packed, flips) -> int:
+    return int(np.sum((decoder.decode_batch_bit_packed(packed)[:, 0] & 1).astype(bool) != flips))
+
+
+def test_stim_decomposition_costs_correlated_decoding_a_unit_of_distance():
+    # Exhaustive: each of the 286 faults of the d = 3 circuit on its own. On
+    # Stim's own decomposition, standard correlated decoding gets some wrong;
+    # plain Union-Find and the regularized rule do not.
+    dem = surface(3, 1e-3).detector_error_model(decompose_errors=True)
+    packed, flips = fault_symptoms(dem)
+    assert len(flips) == 286
+
+    def failures(**kwargs) -> int:
+        return wrong(backlog.UnionFindDecoder.from_dem(dem, decompose="as-is", **kwargs),
+                     packed, flips)
+
+    assert failures() == 0
+    assert failures(correlated=True, alpha=1.0) > 0
+    assert failures(correlated=True, alpha=0.3) == 0
+    # Split by basis (the default), standard correlated decoding keeps d = 3.
+    assert wrong(backlog.UnionFindDecoder.from_dem(dem, correlated=True), packed, flips) == 0
+
+
+def test_every_pair_of_faults_at_distance_5():
+    # All 1,906,128 pairs of faults of the d = 5 circuit, which a distance-5
+    # code must correct (arXiv:2610.26785): plain Union-Find gets none wrong,
+    # standard correlated decoding gets hundreds wrong, the regularized rule
+    # none.
+    dem = backlog.decompose_by_basis(surface(5, 1e-3).detector_error_model(decompose_errors=True))
+    single, flip = fault_symptoms(dem)
+    i, j = np.triu_indices(len(flip), k=1)
+    packed, flips = single[i] ^ single[j], flip[i] ^ flip[j]
+    assert len(flips) == 1_906_128
+    edges = backlog.dem_to_edges(dem)
+    corr = backlog.dem_correlations(dem, edges)
+    assert wrong(backlog.UnionFindDecoder(edges), packed, flips) == 0
+    assert wrong(backlog.UnionFindDecoder(edges, correlations=corr, alpha=1.0), packed, flips) > 100
+    assert wrong(backlog.UnionFindDecoder(edges, correlations=corr, alpha=0.05), packed, flips) == 0
+
+
+def test_sinter_correlated_decoder():
+    task = sinter.Task(circuit=surface(3, 0.004), json_metadata={"d": 3})
+    stats = sinter.collect(num_workers=1, tasks=[task], decoders=["backlog-uf-corr"],
+                           max_shots=2000, custom_decoders=backlog.sinter_decoders())
+    assert stats[0].shots == 2000
+    assert stats[0].errors < 200

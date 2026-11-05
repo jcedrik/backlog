@@ -14,7 +14,7 @@ dependencies = ["numpy>=1.24", "stim>=1.14", "sinter>=1.14"]
 keywords = ["quantum error correction", "decoder", "union-find", "stim", "sinter", "surface code"]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "pymatching>=2.2"]
+test = ["pytest>=7", "pymatching>=2.3"]
 
 [tool.scikit-build]
 cmake.source-dir = "cpp"

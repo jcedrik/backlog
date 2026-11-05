@@ -10,6 +10,11 @@ or from the sinter command line:
     sinter collect ... --decoders backlog-uf \\
         --custom_decoders_module_function "backlog:sinter_decoders"
 
+Correlated decoding is "backlog-uf-corr" (standard, alpha = 1). The
+regularized rule takes the reweighting strength explicitly:
+
+    custom_decoders={"uf-rcorr": backlog.SinterUnionFindDecoder(correlated=True, alpha=0.5)}
+
 The sliding-window decoder needs window sizes, so it is built explicitly:
 
     custom_decoders={"uf-window": backlog.SinterSlidingWindowDecoder(commit=5, buffer=5)}
@@ -34,13 +39,19 @@ class _Compiled(sinter.CompiledDecoder):
 class SinterUnionFindDecoder(sinter.Decoder):
     """A sinter decoder backed by the C++ Union-Find decoder."""
 
-    def __init__(self, weighted: bool = True, resolution: int = 1024):
+    def __init__(self, weighted: bool = True, resolution: int = 1024,
+                 correlated: bool = False, alpha: float = 1.0):
         self.weighted = weighted
         self.resolution = resolution
+        self.correlated = correlated
+        self.alpha = alpha
+
+    def _options(self) -> dict:
+        return dict(weighted=self.weighted, resolution=self.resolution,
+                    correlated=self.correlated, alpha=self.alpha)
 
     def _make(self, dem: stim.DetectorErrorModel):
-        return UnionFindDecoder.from_dem(dem, weighted=self.weighted,
-                                         resolution=self.resolution)
+        return UnionFindDecoder.from_dem(dem, **self._options())
 
     def compile_decoder_for_dem(self, *, dem: stim.DetectorErrorModel) -> sinter.CompiledDecoder:
         return _Compiled(self._make(dem))
@@ -66,15 +77,15 @@ class SinterSlidingWindowDecoder(SinterUnionFindDecoder):
     """
 
     def __init__(self, commit: int, buffer: int, weighted: bool = True,
-                 resolution: int = 1024):
-        super().__init__(weighted=weighted, resolution=resolution)
+                 resolution: int = 1024, correlated: bool = False, alpha: float = 1.0):
+        super().__init__(weighted=weighted, resolution=resolution,
+                         correlated=correlated, alpha=alpha)
         self.commit = commit
         self.buffer = buffer
 
     def _make(self, dem: stim.DetectorErrorModel):
         return SlidingWindowDecoder.from_dem(dem, commit=self.commit, buffer=self.buffer,
-                                             weighted=self.weighted,
-                                             resolution=self.resolution)
+                                             **self._options())
 
 
 class SinterParallelWindowDecoder(SinterUnionFindDecoder):
@@ -85,8 +96,10 @@ class SinterParallelWindowDecoder(SinterUnionFindDecoder):
     """
 
     def __init__(self, commit: int, buffer: int, seam: int | None = None,
-                 threads: int = 1, weighted: bool = True, resolution: int = 1024):
-        super().__init__(weighted=weighted, resolution=resolution)
+                 threads: int = 1, weighted: bool = True, resolution: int = 1024,
+                 correlated: bool = False, alpha: float = 1.0):
+        super().__init__(weighted=weighted, resolution=resolution,
+                         correlated=correlated, alpha=alpha)
         self.commit = commit
         self.buffer = buffer
         self.seam = seam
@@ -95,8 +108,7 @@ class SinterParallelWindowDecoder(SinterUnionFindDecoder):
     def _make(self, dem: stim.DetectorErrorModel):
         return ParallelWindowDecoder.from_dem(dem, commit=self.commit, buffer=self.buffer,
                                               seam=self.seam, threads=self.threads,
-                                              weighted=self.weighted,
-                                              resolution=self.resolution)
+                                              **self._options())
 
 
 def sinter_decoders() -> dict[str, sinter.Decoder]:
@@ -104,4 +116,5 @@ def sinter_decoders() -> dict[str, sinter.Decoder]:
     return {
         "backlog-uf": SinterUnionFindDecoder(weighted=True),
         "backlog-uf-unweighted": SinterUnionFindDecoder(weighted=False),
+        "backlog-uf-corr": SinterUnionFindDecoder(correlated=True),
     }

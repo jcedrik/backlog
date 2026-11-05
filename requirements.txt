@@ -1,5 +1,5 @@
 stim>=1.14
-pymatching>=2.2
+pymatching>=2.3
 sinter>=1.14
 numpy>=1.24
 matplotlib>=3.7

@@ -11,13 +11,15 @@
 """
 from .decoder import (DecodeResult, ParallelWindowDecoder, ReferenceDecoder,
                       SlidingWindowDecoder, UnionFindDecoder)
-from .dem import GraphEdges, dem_to_edges, detector_layers
+from .dem import (Correlations, GraphEdges, decompose_by_basis, dem_correlations, dem_to_edges,
+                  detector_layers, regularization_strength, surface_code_basis)
 from .sinter_decoder import (SinterParallelWindowDecoder, SinterSlidingWindowDecoder,
                              SinterUnionFindDecoder, sinter_decoders)
 
 __version__ = "0.4.0"
 
 __all__ = [
+    "Correlations",
     "DecodeResult",
     "GraphEdges",
     "ParallelWindowDecoder",
@@ -27,7 +29,11 @@ __all__ = [
     "SinterUnionFindDecoder",
     "SlidingWindowDecoder",
     "UnionFindDecoder",
+    "decompose_by_basis",
+    "dem_correlations",
     "dem_to_edges",
     "detector_layers",
+    "regularization_strength",
     "sinter_decoders",
+    "surface_code_basis",
 ]
