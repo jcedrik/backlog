@@ -1,7 +1,7 @@
 // Window decoders: the weighted Union-Find decoder applied to slices of time.
 //
 // Detectors are grouped in time layers, one per round of syndrome extraction.
-// A real-time decoder cannot wait for the end of the experiment, so the
+// A real-time decoder cannot wait for the end of the experiment, so both
 // decoders here split the layers into windows and decode each window on its
 // own. A window decodes its layers, keeps (commits) the part of the
 // correction that touches its commit region, and passes the syndrome flips of
@@ -21,7 +21,18 @@
 //   decode, commit the oldest C layers, slide by C. The last window commits
 //   everything.
 //
-// Every detector is explained by exactly one window's committed
+// ParallelWindowDecoder (Skoric et al. 2023, Tan et al. 2023):
+//
+//   ... seam |  buffer | core: commit C | buffer |  seam | buffer | core ...
+//            open      <-- core window, both sides open --> open
+//
+//   1. Core windows (commit C layers, a buffer of B on each side) do not
+//      depend on each other and are decoded in parallel.
+//   2. Seams (the G layers between two core commit regions) are then decoded
+//      in parallel too, with both sides closed: the cores already committed
+//      everything around them, and their flips are part of the seam syndrome.
+//
+// In both cases every detector is explained by exactly one window's committed
 // edges plus the flips passed to it, so the committed correction always
 // reproduces the syndrome. With one window covering every layer, the result is
 // exactly the whole-shot decoder's.
@@ -42,7 +53,7 @@
 namespace backlog {
 
 struct Window {
-    enum Kind : uint8_t { Sliding = 0 };
+    enum Kind : uint8_t { Sliding = 0, Core = 1, Seam = 2 };
     Kind kind = Sliding;
     int32_t first_layer = 0;   // layers [first_layer, end_layer) are decoded
     int32_t end_layer = 0;
@@ -58,6 +69,7 @@ struct Window {
 
 namespace detail {
 class WindowPlan;
+class ThreadPool;
 }  // namespace detail
 
 class SlidingWindowDecoder {
@@ -112,6 +124,63 @@ private:
     std::vector<int32_t> local_;
     std::vector<int32_t> local_correction_;
     std::vector<int32_t> flips_;
+};
+
+class ParallelWindowDecoder {
+public:
+    // Core windows commit commit_layers each, with buffer_layers of buffer on
+    // both sides; seams of seam_layers sit between consecutive core commit
+    // regions. seam_layers must cover the longest edge in time (one layer for
+    // Stim memory circuits). threads >= 1, including the calling thread.
+    ParallelWindowDecoder(DecodingGraph graph, std::vector<int32_t> layer,
+                          int32_t commit_layers, int32_t buffer_layers,
+                          int32_t seam_layers, int32_t threads);
+    ~ParallelWindowDecoder();
+    ParallelWindowDecoder(const ParallelWindowDecoder&) = delete;
+    ParallelWindowDecoder& operator=(const ParallelWindowDecoder&) = delete;
+
+    const DecodingGraph& graph() const;
+    int32_t num_layers() const;
+    int32_t num_threads() const;
+    int32_t num_windows() const;
+    int32_t num_shapes() const;
+    // In time order: core, seam, core, seam, ..., possibly ending with a seam.
+    const std::vector<Window>& windows() const;
+
+    uint64_t decode(const int32_t* fired, std::size_t count);
+    uint64_t decode(const std::vector<int32_t>& fired) {
+        return decode(fired.data(), fired.size());
+    }
+    DecodeResult decode_detailed(const std::vector<int32_t>& fired);
+
+    void decode_batch_bit_packed(const uint8_t* dets, std::size_t shots,
+                                 std::size_t det_stride, uint8_t* obs_out,
+                                 std::size_t obs_stride);
+
+    // Work time of every window of every shot, in nanoseconds, row-major
+    // (shots x windows, windows in time order), measured by the thread that
+    // decoded it.
+    std::vector<double> window_latency_ns(const uint8_t* dets, std::size_t shots,
+                                          std::size_t det_stride);
+    // Wall-clock time of each shot with all threads, in nanoseconds.
+    std::vector<double> shot_latency_ns(const uint8_t* dets, std::size_t shots,
+                                        std::size_t det_stride);
+
+private:
+    struct Scratch;
+    struct Result;
+    uint64_t run(const int32_t* fired, std::size_t count,
+                 std::vector<int32_t>* correction, double* window_ns);
+
+    std::unique_ptr<detail::WindowPlan> plan_;
+    std::unique_ptr<detail::ThreadPool> pool_;
+    std::vector<std::vector<std::unique_ptr<UnionFindDecoder>>> decoders_;  // [thread][shape]
+    std::vector<int32_t> cores_;   // window indices of the core windows
+    std::vector<int32_t> seams_;   // window indices of the seams
+    std::vector<Scratch> scratch_;  // one per thread
+    std::vector<Result> results_;   // one per window
+    std::vector<std::vector<int32_t>> seam_flips_;  // flips received, per seam
+    std::vector<int32_t> sorted_;
 };
 
 }  // namespace backlog

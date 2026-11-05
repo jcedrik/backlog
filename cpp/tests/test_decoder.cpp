@@ -6,10 +6,12 @@
 // the same correction, edge for edge, in the same order. The same fast decoder
 // object is reused across shots, which also exercises its lazy state reset.
 //
-// The sliding-window decoder gets its own fuzzer on random layered graphs:
-// every committed correction must reproduce the syndrome, and a single window
-// covering every layer must give exactly the whole-shot answer.
+// The window decoders get their own fuzzers on random layered graphs: every
+// committed correction must reproduce the syndrome, a single window covering
+// every layer must give exactly the whole-shot answer, and the parallel
+// decoder must give the same answer for any number of threads.
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <random>
 #include <set>
@@ -365,6 +367,135 @@ void test_window_batch_matches_single_shots() {
     CHECK(lat.size() == shots * static_cast<std::size_t>(win.num_windows()));
 }
 
+int32_t max_span(const LayeredGraph& lg) {
+    int32_t span = 0;
+    for (const Edge& e : lg.graph.edges()) {
+        if (e.a != lg.graph.boundary() && e.b != lg.graph.boundary()) {
+            span = std::max(span, std::abs(lg.layer[e.a] - lg.layer[e.b]));
+        }
+    }
+    return span;
+}
+
+// Three layers, one detector each: D0, D1, D2, chained in time.
+//   edge 0: D0 - D1  weight 1      edge 2: D0 - B  weight 9
+//   edge 1: D1 - D2  weight 1      edge 3: D1 - B  weight 9
+//                                  edge 4: D2 - B  weight 9
+// Parallel windows with commit 1, no buffer, seam 1: core 0 commits D0, the
+// seam is D1, core 1 commits D2. An error on edge 1 fires D1 and D2. Core 1
+// must see edge 1 through its open past (as a boundary edge), commit it, and
+// hand the flip of D1 to the seam, which then has nothing left to do.
+void test_parallel_core_sees_its_past() {
+    const std::vector<Edge> edges = {edge(0, 1), edge(1, 2), edge(0, 3), edge(1, 3), edge(2, 3)};
+    DecodingGraph g(3, 1, edges, std::vector<int32_t>{1, 1, 9, 9, 9});
+    ParallelWindowDecoder par(g, {0, 1, 2}, 1, 0, 1, 2);
+    CHECK(par.num_windows() == 3);
+    const DecodeResult r = par.decode_detailed({1, 2});
+    CHECK(r.correction == std::vector<int32_t>{1});
+    CHECK(r.syndrome_ok);
+}
+
+void test_parallel_layout() {
+    std::mt19937_64 rng(7);
+    LayeredGraph lg = random_layered_graph(rng, /*periodic=*/true);
+    // 20 layers, commit 2, buffer 2, seam 2: cores commit [0,2), [4,6), ...
+    ParallelWindowDecoder par(lg.graph, lg.layer, 2, 2, 2, 2);
+    CHECK(par.num_threads() == 2);
+    CHECK(par.num_windows() == 10);
+    const std::vector<Window>& w = par.windows();
+    CHECK(w[0].kind == Window::Core && w[0].first_layer == 0 && w[0].end_layer == 4);
+    CHECK(w[1].kind == Window::Seam && w[1].first_layer == 2 && w[1].end_layer == 4);
+    CHECK(w[2].kind == Window::Core && w[2].first_layer == 2 && w[2].end_layer == 8);
+    CHECK(w[2].commit_begin == 4 && w[2].commit_end == 6);
+    CHECK(w.back().kind == Window::Seam && w.back().end_layer == 20);
+    CHECK(par.num_shapes() <= 5);  // bulk cores share one, bulk seams another
+
+    bool threw = false;
+    try {
+        ParallelWindowDecoder bad(lg.graph, lg.layer, 2, 2, 0, 1);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK(threw);  // a seam must hold at least one layer
+}
+
+void test_parallel_fuzz(int num_graphs, int shots_per_graph) {
+    std::mt19937_64 rng(20261106);
+    long long cases = 0, invalid = 0, inconsistent = 0, thread_dependent = 0, differ = 0;
+    for (int gi = 0; gi < num_graphs; ++gi) {
+        LayeredGraph lg = random_layered_graph(rng, gi % 10 == 0);
+        const DecodingGraph& g = lg.graph;
+        const int32_t L = lg.layer.back() + 1;
+        const int32_t C = 1 + static_cast<int32_t>(rng() % 3);
+        const int32_t B = static_cast<int32_t>(rng() % 4);
+        const int32_t G = std::max<int32_t>(max_span(lg), 1 + static_cast<int32_t>(rng() % 3));
+        ParallelWindowDecoder one_thread(g, lg.layer, C, B, G, 1);
+        ParallelWindowDecoder three_threads(g, lg.layer, C, B, G, 3);
+        ParallelWindowDecoder single(g, lg.layer, L, static_cast<int32_t>(rng() % 3), G, 2);
+        UnionFindDecoder whole(g);
+        CHECK(single.num_windows() == 1);
+        std::uniform_real_distribution<double> unit(0.0, 1.0);
+        const double q = 0.05 + 0.45 * unit(rng);
+        for (int s = 0; s < shots_per_graph; ++s) {
+            std::vector<int32_t> fired;
+            for (int32_t v = 0; v < g.num_detectors(); ++v) {
+                if (unit(rng) < q) fired.push_back(v);
+            }
+            ++cases;
+            const DecodeResult r = one_thread.decode_detailed(fired);
+            uint64_t x = 0;
+            for (int32_t e : r.correction) x ^= g.edge(e).obs;
+            if (!r.syndrome_ok) ++invalid;
+            if (x != r.observables || one_thread.decode(fired) != r.observables) ++inconsistent;
+
+            // Any number of threads gives exactly the same answer.
+            const DecodeResult r3 = three_threads.decode_detailed(fired);
+            if (r3.correction != r.correction || r3.observables != r.observables) {
+                ++thread_dependent;
+            }
+
+            // One core window covering everything is the whole-shot decoder.
+            const DecodeResult a = single.decode_detailed(fired);
+            const DecodeResult b = whole.decode_detailed(fired);
+            if (a.correction != b.correction || a.observables != b.observables) ++differ;
+        }
+    }
+    std::printf("parallel windows: %lld random cases, %lld invalid corrections, %lld inconsistent, "
+                "%lld depend on the thread count, %lld differences with whole-shot decoding\n",
+                cases, invalid, inconsistent, thread_dependent, differ);
+    CHECK(invalid == 0);
+    CHECK(inconsistent == 0);
+    CHECK(thread_dependent == 0);
+    CHECK(differ == 0);
+}
+
+void test_parallel_batch_matches_single_shots() {
+    std::mt19937_64 rng(99);
+    LayeredGraph lg = random_layered_graph(rng, /*periodic=*/true);
+    ParallelWindowDecoder par(lg.graph, lg.layer, 3, 2, 2, 2);
+    const int32_t n = lg.graph.num_detectors();
+    const std::size_t stride = (static_cast<std::size_t>(n) + 7) / 8;
+    const std::size_t shots = 64;
+    std::vector<uint8_t> packed(shots * stride, 0);
+    std::vector<std::vector<int32_t>> fired(shots);
+    for (std::size_t s = 0; s < shots; ++s) {
+        for (int32_t v = 0; v < n; ++v) {
+            if (rng() % 5 == 0) {
+                fired[s].push_back(v);
+                packed[s * stride + v / 8] |= static_cast<uint8_t>(1u << (v % 8));
+            }
+        }
+    }
+    std::vector<uint8_t> out(shots, 0xFF);
+    par.decode_batch_bit_packed(packed.data(), shots, stride, out.data(), 1);
+    for (std::size_t s = 0; s < shots; ++s) {
+        CHECK(out[s] == static_cast<uint8_t>(par.decode(fired[s])));
+    }
+    CHECK(par.window_latency_ns(packed.data(), shots, stride).size() ==
+          shots * static_cast<std::size_t>(par.num_windows()));
+    CHECK(par.shot_latency_ns(packed.data(), shots, stride).size() == shots);
+}
+
 }  // namespace
 
 int main() {
@@ -378,6 +509,10 @@ int main() {
     test_window_shapes_are_shared();
     test_window_fuzz(3000, 25);
     test_window_batch_matches_single_shots();
+    test_parallel_core_sees_its_past();
+    test_parallel_layout();
+    test_parallel_fuzz(3000, 25);
+    test_parallel_batch_matches_single_shots();
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures) {

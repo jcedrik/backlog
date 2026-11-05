@@ -9,6 +9,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(BACKLOG_BUILD_TOOLS "Build the CLI and the C++ test suite" ON)
+option(BACKLOG_TSAN "Build with ThreadSanitizer (data race detection)" OFF)
+if(BACKLOG_TSAN)
+  add_compile_options(-fsanitize=thread -g -O1)
+  add_link_options(-fsanitize=thread)
+endif()
 option(BACKLOG_BUILD_PYTHON "Build the Python extension module" OFF)
 if(SKBUILD)
   # pip install: only the Python module
@@ -23,6 +28,8 @@ add_library(backlog_core STATIC
   src/window.cpp
 )
 target_include_directories(backlog_core PUBLIC include)
+find_package(Threads REQUIRED)
+target_link_libraries(backlog_core PUBLIC Threads::Threads)
 if(NOT MSVC)
   target_compile_options(backlog_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()

@@ -2,9 +2,14 @@
 #include "backlog/window.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <map>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace backlog {
@@ -212,6 +217,102 @@ void check_ids(const std::vector<int32_t>& v, int32_t n) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ThreadPool: run(count, f) calls f(task, thread) for every task in
+// [0, count), spread over the calling thread and the workers, and returns
+// when all are done. Idle workers spin for a short while before sleeping, so
+// back-to-back phases do not pay a kernel wake-up each time (the usual
+// spin-then-block policy of OpenMP runtimes).
+
+class ThreadPool {
+public:
+    explicit ThreadPool(int32_t threads) {
+        // Spinning only pays when every thread has a core of its own.
+        const unsigned cores = std::thread::hardware_concurrency();
+        spin_ = cores == 0 || static_cast<unsigned>(threads) <= cores;
+        for (int32_t t = 1; t < threads; ++t) workers_.emplace_back([this, t] { loop(t); });
+    }
+    ~ThreadPool() {
+        stop_.store(true, std::memory_order_relaxed);
+        generation_.fetch_add(1, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(m_);
+        }
+        wake_.notify_all();
+        for (std::thread& w : workers_) w.join();
+    }
+    int32_t size() const { return static_cast<int32_t>(workers_.size()) + 1; }
+
+    void run(int32_t count, const std::function<void(int32_t, int32_t)>& f) {
+        if (workers_.empty() || count <= 1) {
+            for (int32_t i = 0; i < count; ++i) f(i, 0);
+            return;
+        }
+        job_ = &f;
+        count_ = count;
+        next_.store(0, std::memory_order_relaxed);
+        busy_.store(static_cast<int32_t>(workers_.size()), std::memory_order_relaxed);
+        generation_.fetch_add(1, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            if (sleepers_ > 0) wake_.notify_all();
+        }
+        work(0);
+        if (!spin_until(spin_, [this] { return busy_.load(std::memory_order_acquire) == 0; })) {
+            std::unique_lock<std::mutex> lock(m_);
+            done_.wait(lock, [this] { return busy_.load(std::memory_order_acquire) == 0; });
+        }
+        job_ = nullptr;
+    }
+
+private:
+    template <class Pred>
+    static bool spin_until(bool spin, Pred&& ready) {
+        if (!spin) return ready();
+        const auto limit = std::chrono::steady_clock::now() + std::chrono::microseconds(50);
+        for (uint32_t i = 0;; ++i) {
+            if (ready()) return true;
+            if ((i & 63) == 0 && std::chrono::steady_clock::now() > limit) return false;
+        }
+    }
+    void work(int32_t thread) {
+        for (int32_t i = next_.fetch_add(1); i < count_; i = next_.fetch_add(1)) {
+            (*job_)(i, thread);
+        }
+    }
+    void loop(int32_t thread) {
+        uint64_t seen = 0;
+        while (true) {
+            auto fresh = [&] { return generation_.load(std::memory_order_acquire) != seen; };
+            if (!spin_until(spin_, fresh)) {
+                std::unique_lock<std::mutex> lock(m_);
+                ++sleepers_;
+                wake_.wait(lock, fresh);
+                --sleepers_;
+            }
+            seen = generation_.load(std::memory_order_acquire);
+            if (stop_.load(std::memory_order_relaxed)) return;
+            work(thread);
+            if (busy_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                std::lock_guard<std::mutex> lock(m_);
+                done_.notify_one();
+            }
+        }
+    }
+
+    std::vector<std::thread> workers_;
+    bool spin_ = true;  // set before the workers start, read-only afterwards
+    std::mutex m_;
+    std::condition_variable wake_, done_;
+    int32_t sleepers_ = 0;  // guarded by m_
+    const std::function<void(int32_t, int32_t)>* job_ = nullptr;
+    int32_t count_ = 0;
+    std::atomic<int32_t> next_{0};
+    std::atomic<int32_t> busy_{0};
+    std::atomic<uint64_t> generation_{0};
+    std::atomic<bool> stop_{false};
+};
+
 }  // namespace detail
 
 using detail::WindowPlan;
@@ -382,6 +483,216 @@ std::vector<double> SlidingWindowDecoder::window_latency_ns(const uint8_t* dets,
     for (std::size_t s = 0; s < shots; ++s) {
         unpack_shot(dets + s * det_stride, det_bytes, g.num_detectors(), sorted_);
         sink = sink ^ run(sorted_.data(), sorted_.size(), nullptr, out.data() + s * W);
+    }
+    (void)sink;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// ParallelWindowDecoder
+
+struct ParallelWindowDecoder::Scratch {
+    std::vector<int32_t> local;
+    std::vector<int32_t> local_correction;
+    std::vector<int32_t> no_flips;  // seams commit everything: must stay empty
+};
+
+struct ParallelWindowDecoder::Result {
+    uint64_t obs = 0;
+    std::vector<int32_t> flips;
+    std::vector<int32_t> correction;
+};
+
+ParallelWindowDecoder::ParallelWindowDecoder(DecodingGraph graph, std::vector<int32_t> layer,
+                                             int32_t commit_layers, int32_t buffer_layers,
+                                             int32_t seam_layers, int32_t threads)
+    : plan_(std::make_unique<WindowPlan>(std::move(graph), std::move(layer))) {
+    if (commit_layers < 1) throw std::invalid_argument("commit_layers must be >= 1");
+    if (buffer_layers < 0) throw std::invalid_argument("buffer_layers must be >= 0");
+    if (seam_layers < 1) throw std::invalid_argument("seam_layers must be >= 1");
+    if (threads < 1) throw std::invalid_argument("threads must be >= 1");
+    WindowPlan& p = *plan_;
+    if (seam_layers < p.max_span()) {
+        throw std::invalid_argument(
+            "seam_layers must be at least the longest edge in time (in layers)");
+    }
+    const int32_t L = p.num_layers;
+    const int32_t period = commit_layers + seam_layers;
+    for (int32_t s = 0; s < L; s += period) {
+        const int32_t commit_end = std::min(s + commit_layers, L);
+        p.add(Window::Core, std::max(0, s - buffer_layers),
+              std::min(L, commit_end + buffer_layers), s, commit_end,
+              WindowPlan::Side::Open, WindowPlan::Side::Open);
+        if (commit_end < L) {
+            const int32_t seam_end = std::min(s + period, L);
+            p.add(Window::Seam, commit_end, seam_end, commit_end, seam_end,
+                  WindowPlan::Side::Closed, WindowPlan::Side::Closed);
+        }
+    }
+    p.finish();
+    for (int32_t k = 0; k < static_cast<int32_t>(p.windows.size()); ++k) {
+        (p.windows[k].kind == Window::Core ? cores_ : seams_).push_back(k);
+    }
+    pool_ = std::make_unique<detail::ThreadPool>(threads);
+    decoders_.resize(static_cast<std::size_t>(threads));
+    for (auto& per_thread : decoders_) {
+        for (const WindowPlan::Shape& shape : p.shapes) {
+            per_thread.push_back(std::make_unique<UnionFindDecoder>(shape.graph));
+        }
+    }
+    scratch_.resize(static_cast<std::size_t>(threads));
+    results_.resize(p.windows.size());
+    seam_flips_.resize(p.windows.size());
+}
+
+ParallelWindowDecoder::~ParallelWindowDecoder() = default;
+
+const DecodingGraph& ParallelWindowDecoder::graph() const { return plan_->g; }
+int32_t ParallelWindowDecoder::num_layers() const { return plan_->num_layers; }
+int32_t ParallelWindowDecoder::num_threads() const { return pool_->size(); }
+int32_t ParallelWindowDecoder::num_windows() const {
+    return static_cast<int32_t>(plan_->windows.size());
+}
+int32_t ParallelWindowDecoder::num_shapes() const {
+    return static_cast<int32_t>(plan_->shapes.size());
+}
+const std::vector<Window>& ParallelWindowDecoder::windows() const { return plan_->windows; }
+
+uint64_t ParallelWindowDecoder::run(const int32_t* fired, std::size_t count,
+                                    std::vector<int32_t>* correction, double* window_ns) {
+    const WindowPlan& p = *plan_;
+    const bool detailed = correction != nullptr;
+    auto in_range = [fired, count](int32_t lo, int32_t hi) {
+        const int32_t* b = std::lower_bound(fired, fired + count, lo);
+        const int32_t* e = std::lower_bound(b, fired + count, hi);
+        return std::make_pair(b, e);
+    };
+
+    // 1. Core windows, independent of each other.
+    pool_->run(static_cast<int32_t>(cores_.size()), [&](int32_t i, int32_t t) {
+        const int32_t k = cores_[i];
+        const Window& w = p.windows[k];
+        const Clock::time_point t0 = window_ns ? Clock::now() : Clock::time_point{};
+        Result& r = results_[k];
+        r.obs = 0;
+        r.flips.clear();
+        r.correction.clear();
+        if (w.shape >= 0) {
+            Scratch& s = scratch_[t];
+            const auto range = in_range(w.lo, w.hi);
+            s.local.clear();
+            for (const int32_t* v = range.first; v != range.second; ++v) s.local.push_back(*v - w.lo);
+            r.obs = detail::solve_window(p, w, *decoders_[t][w.shape], s.local,
+                                         s.local_correction, r.flips,
+                                         detailed ? &r.correction : nullptr);
+        }
+        if (window_ns) window_ns[k] = elapsed_ns(t0);
+    });
+
+    // 2. Hand every flip to the seam that contains it.
+    for (int32_t j : seams_) seam_flips_[j].clear();
+    for (int32_t k : cores_) {
+        for (int32_t v : results_[k].flips) {
+            auto it = std::upper_bound(seams_.begin(), seams_.end(), v,
+                                       [&p](int32_t x, int32_t j) { return x < p.windows[j].lo; });
+            if (it == seams_.begin() || v >= p.windows[*(it - 1)].hi) {
+                throw std::logic_error("a core window flipped a detector outside every seam");
+            }
+            seam_flips_[*(it - 1)].push_back(v);
+        }
+    }
+
+    // 3. Seams, independent of each other once the cores are committed.
+    pool_->run(static_cast<int32_t>(seams_.size()), [&](int32_t i, int32_t t) {
+        const int32_t k = seams_[i];
+        const Window& w = p.windows[k];
+        const Clock::time_point t0 = window_ns ? Clock::now() : Clock::time_point{};
+        Result& r = results_[k];
+        r.obs = 0;
+        r.flips.clear();
+        r.correction.clear();
+        if (w.shape >= 0) {
+            Scratch& s = scratch_[t];
+            const auto range = in_range(w.lo, w.hi);
+            s.local.assign(range.first, range.second);
+            s.local.insert(s.local.end(), seam_flips_[k].begin(), seam_flips_[k].end());
+            detail::canonicalize(s.local);
+            for (int32_t& v : s.local) v -= w.lo;
+            s.no_flips.clear();
+            r.obs = detail::solve_window(p, w, *decoders_[t][w.shape], s.local,
+                                         s.local_correction, s.no_flips,
+                                         detailed ? &r.correction : nullptr);
+        }
+        if (window_ns) window_ns[k] = elapsed_ns(t0);
+    });
+
+    uint64_t obs = 0;
+    if (correction) correction->clear();
+    for (std::size_t k = 0; k < results_.size(); ++k) {
+        obs ^= results_[k].obs;
+        if (correction) {
+            correction->insert(correction->end(), results_[k].correction.begin(),
+                               results_[k].correction.end());
+        }
+    }
+    return obs;
+}
+
+uint64_t ParallelWindowDecoder::decode(const int32_t* fired, std::size_t count) {
+    sorted_.assign(fired, fired + count);
+    detail::check_ids(sorted_, plan_->g.num_detectors());
+    detail::canonicalize(sorted_);
+    return run(sorted_.data(), sorted_.size(), nullptr, nullptr);
+}
+
+DecodeResult ParallelWindowDecoder::decode_detailed(const std::vector<int32_t>& fired) {
+    DecodeResult r;
+    sorted_ = fired;
+    detail::check_ids(sorted_, plan_->g.num_detectors());
+    detail::canonicalize(sorted_);
+    r.observables = run(sorted_.data(), sorted_.size(), &r.correction, nullptr);
+    r.syndrome_ok = correction_explains(plan_->g, fired, r.correction);
+    return r;
+}
+
+void ParallelWindowDecoder::decode_batch_bit_packed(const uint8_t* dets, std::size_t shots,
+                                                    std::size_t det_stride, uint8_t* obs_out,
+                                                    std::size_t obs_stride) {
+    batch(plan_->g, dets, shots, det_stride, obs_out, obs_stride, sorted_, [this] {
+        return run(sorted_.data(), sorted_.size(), nullptr, nullptr);
+    });
+}
+
+std::vector<double> ParallelWindowDecoder::window_latency_ns(const uint8_t* dets,
+                                                             std::size_t shots,
+                                                             std::size_t det_stride) {
+    const DecodingGraph& g = plan_->g;
+    check_rows(g, det_stride, (static_cast<std::size_t>(g.num_observables()) + 7) / 8);
+    const std::size_t det_bytes = (static_cast<std::size_t>(g.num_detectors()) + 7) / 8;
+    const std::size_t W = plan_->windows.size();
+    std::vector<double> out(shots * W);
+    volatile uint64_t sink = 0;
+    for (std::size_t s = 0; s < shots; ++s) {
+        unpack_shot(dets + s * det_stride, det_bytes, g.num_detectors(), sorted_);
+        sink = sink ^ run(sorted_.data(), sorted_.size(), nullptr, out.data() + s * W);
+    }
+    (void)sink;
+    return out;
+}
+
+std::vector<double> ParallelWindowDecoder::shot_latency_ns(const uint8_t* dets,
+                                                           std::size_t shots,
+                                                           std::size_t det_stride) {
+    const DecodingGraph& g = plan_->g;
+    check_rows(g, det_stride, (static_cast<std::size_t>(g.num_observables()) + 7) / 8);
+    const std::size_t det_bytes = (static_cast<std::size_t>(g.num_detectors()) + 7) / 8;
+    std::vector<double> out(shots);
+    volatile uint64_t sink = 0;
+    for (std::size_t s = 0; s < shots; ++s) {
+        unpack_shot(dets + s * det_stride, det_bytes, g.num_detectors(), sorted_);
+        const Clock::time_point t0 = Clock::now();
+        sink = sink ^ run(sorted_.data(), sorted_.size(), nullptr, nullptr);
+        out[s] = elapsed_ns(t0);
     }
     (void)sink;
     return out;
