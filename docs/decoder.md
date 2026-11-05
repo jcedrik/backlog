@@ -233,10 +233,13 @@ it is to decode several windows at once (Skoric et al. 2023, Tan et al.
 1. **Core windows** commit C rounds, with B rounds of buffer on each side.
    Both sides are open (edges leaving the window go to the boundary), so a
    core window depends on nothing else: all of them run in parallel.
-2. **Seams**, the G rounds between two core commit regions, run next, also in
-   parallel. Both sides are closed: the cores around them have committed, and
-   the flips of their committed edges are part of the seam's syndrome. A seam
-   commits everything it decodes.
+2. **Seams**, the G rounds between two core commit regions, run as soon as
+   the two cores around them have committed, on the thread that finished the
+   second of them (its flips are still in that core's cache). There is no
+   barrier between cores and seams: a thread that is done with a core takes
+   the next core or the seam it just unlocked. Both sides of a seam are
+   closed: the flips of the cores' committed edges are part of its syndrome.
+   A seam commits everything it decodes.
 
 G must cover the longest edge in time (one round for Stim memory circuits),
 so a core's flips always land in a seam, never in another core: a check stops
@@ -244,10 +247,15 @@ the run otherwise.
 
 **Same answer for any number of threads.** Each window only reads the
 original syndrome and the flips handed to it, and writes its own result, so
-the scheduling cannot change the answer. Each thread owns its scratch space
-and its own copy of every window decoder; the thread pool spins for 50 µs
-before sleeping (when every thread has a core) so back-to-back phases do not
-pay a kernel wake-up. The fuzzer checks on 75,000 random layered graphs that
+the scheduling cannot change the answer. Each core writes its flips into two
+inboxes, one per neighboring seam, each with that core as its only writer;
+an atomic counter per seam says when both inboxes are full. Each thread owns
+its scratch space and its own copy of every window decoder. The thread pool
+spins for 50 µs before sleeping, with the x86 PAUSE instruction in the loop,
+and only when every thread has a physical core of its own (read from the
+CPU topology): a spinning hyperthread steals execution units from the
+sibling doing real work. An exception thrown by a window on a worker thread
+is carried back to the caller instead of ending the process. The fuzzer checks on 75,000 random layered graphs that
 1 and 3 threads give the same correction, edge for edge, that it reproduces
 the syndrome, and that one core window covering everything is the whole-shot
 decoder; the whole suite also runs under ThreadSanitizer (`make tsan`) with
@@ -257,22 +265,21 @@ below a core window must still be matched through it.
 **What it costs and what it buys.** With C = B = G = d, every round is
 decoded about twice, as with sliding windows, and accuracy is the same: on
 the same shots, 0.8 to 1.3% more logical errors than whole-shot decoding
-(d = 3 to 9, p = 0.5%). On this 2-core machine, 2 threads are 1.6 to 1.85
-times faster than one from d = 7 (1.4 times at d = 5, where the two phase
-barriers per shot weigh more).
+(d = 3 to 9, p = 0.5%). On this 2-core machine, 2 threads are 1.54 to 1.79
+times faster than one (d = 5 to 17); before seams stopped waiting for every
+core, d = 5 only reached 1.4.
 
 **How many cores for real time?** `python/parallel_benchmark.py` measures the
 work of every window, then replays a stream: rounds every microsecond, core
 windows ready once their buffer has arrived, seams once both neighbors have
 committed, N cores taking the oldest period first. The same model, applied to
-2 cores, predicts the real 2-thread time within 12% from d = 9 (it is
-optimistic: it ignores synchronization), so the core counts below keep 15%
-headroom:
+2 cores, predicts the real 2-thread time within 1 to 13% (it is optimistic:
+it ignores synchronization), so the core counts below keep 15% headroom:
 
 | d | 9 | 11 | 13 | 15 | 17 |
 |---|---|---|---|---|---|
-| p = 0.1% | 1 | 2 | 3 | 3 | 4 |
-| p = 0.3% | 4 | 6 | 8 | 11 | 15 |
+| p = 0.1% | 1 | 2 | 2 | 3 | 4 |
+| p = 0.3% | 4 | 6 | 9 | 11 | 15 |
 
 With fewer cores the delay grows without bound; with these, it stays under
 about a millisecond. The price is latency: the oldest round of a seam waits
@@ -289,16 +296,120 @@ every window graph), hyperthreads share a core with spinning workers, and the
 host takes CPUs away from the virtual machine mid-phase. The core counts
 above are therefore lower bounds.
 
-## 9. Limits
+Since then, `make scaling` splits the gap between model and measurement in
+two: **work inflation** (the total work of the windows with t threads,
+divided by the same with one thread: the same windows run slower when more
+cores are busy) and the **busy fraction** (window work divided by t times the
+wall time: the rest is threads waiting). The scheduler also changed under it
+(no barrier between cores and seams, no spinning on hyperthreads), so the
+laptop numbers above are the baseline the next measurement is compared to.
+
+## 9. Correlated decoding
+
+A Y error on a data qubit is an X error and a Z error at once: in a
+decomposed detector error model it appears as an X-type edge and a Z-type
+edge, decoded independently, and the decoder forgets that they come
+together. Correlated decoding remembers (Fowler 2013; PyMatching since
+version 2.3):
+
+1. Decode once, as usual.
+2. For every edge e of that correction and every edge f that comes with e in
+   some error, lower f's weight to that of probability P(f | e) = P(e and f) /
+   P(e), if that is lower than its own.
+3. Decode again with those weights; restore them.
+
+`backlog.dem_correlations` computes the conditional probabilities exactly as
+PyMatching does (both P(e and f) and P(e) combine the errors that contain
+them as independent events), and the two decoders behave the same way: on
+the same shots their correlated versions remove the same fraction of errors,
+and on the exhaustive fault checks below they fail almost the same sets.
+
+**Exactly the decoder on the reweighted graph.** The event-driven decoder
+relies on each node's adjacency sorted by weight. A lowered edge can only
+move left in its endpoints' lists, so one insertion step per change keeps
+them sorted; the lists and the weights touched are saved before and copied
+back after the shot (the boundary node never grows, so its list is never
+read). The fuzzer checks on 75,000 random graphs with random rules, reusing
+one decoder for every shot, that the second pass equals the reference
+decoder run on the explicitly reweighted graph, edge for edge. Windows carry
+the rules whose two edges are both inside them, and the window fuzzers check
+that one window covering everything equals the whole-shot correlated decoder.
+
+**The decomposition matters.** Stim's decomposer splits an error into any
+graphlike pieces that occur elsewhere in the model; at d = 5 it splits 400
+errors into several pieces of the same stabilizer type, which gives the
+reweighting partners that are not physical. With that decomposition,
+correlated decoding at d = 3 and p = 0.1% has 44% *more* logical errors than
+plain decoding, for PyMatching and for backlog alike (1 million shots,
+`results/correlated_decomposition.csv`), and both correlated decoders get 6
+of the 286 single faults wrong, which a distance-3 code must correct. `decompose_by_basis` splits every error into exactly its
+X-type part and its Z-type part (the stabilizer type comes from Stim's
+detector coordinates), each part keeping the observables it has when it
+occurs alone. Correlated decoding then gains at d = 3 too (7% fewer errors
+there), and at d = 5 the gain goes from 28% to 46%. backlog's correlated
+decoders apply this split by default.
+
+**A unit of distance lost, and won back.** A distance-d code must correct
+every set of (d-1)/2 faults (a fault is one error of the model). Hernando de
+la Fuente et al. (2026) showed that standard correlated decoding does not:
+one first-pass edge can discount several partner edges at once, as if their
+joint occurrence came for free, while it really needs extra independent
+faults. `python/fault_distance.py` decodes every single fault and every pair
+of faults (d = 5: 1,906,128 pairs) with every decoder:
+
+| d = 5, pairs of faults decoded wrongly | p = 10⁻⁴ | 3·10⁻⁴ | 10⁻³ | 3·10⁻³ |
+|---|---|---|---|---|
+| Union-Find, PyMatching | 0 | 0 | 0 | 0 |
+| correlated UF, α = 1 | 425 | 367 | 320 | 284 |
+| correlated PyMatching | 440 | 361 | 311 | 281 |
+| correlated UF, α = 0.3 | 73 | 34 | 23 | 29 |
+| correlated UF, α = 0.1 | 11 | 4 | 2 | 2 |
+| correlated UF, α = 0.05 | 2 | 0 | 0 | 0 |
+
+(At d = 3, with the basis decomposition, every single fault is corrected by
+every decoder.) The regularized rule multiplies every conditional
+probability by α ≤ 1, which charges ln(1/α) more for each discounted edge.
+How much α to take is a trade-off: a smaller α corrects more pairs, but also
+discounts less where the correlation is real. On the Monte Carlo runs
+(`python/correlated_benchmark.py`, same shots for every decoder), the best α
+of the grid is 0.3 to 0.5 at p = 0.1% and 1 from p = 0.5%, which the
+paper's form α*(p) = α₀ / (1 + (p₀/p)^k) follows with α₀ = 1, p₀ = 10⁻³ and
+k = 1 (`backlog.regularization_strength`). At d = 3, where the leading order
+of the logical error rate is the pairs of faults, the exact enumeration
+gives the same trend: the best α falls from 1 at p = 0.3% to about 0.2 at
+p = 10⁻⁴ (`results/fault_distance.png`, right).
+
+**What it buys.** On the same shots, correlated Union-Find makes 7 to 12%
+fewer logical errors than plain Union-Find at d = 3, 21 to 38% fewer at
+d = 5 and 32 to 67% fewer at d = 7 (p = 0.1% to 0.7%); PyMatching gains the
+same from its own correlated mode, and correlated Union-Find makes fewer
+errors than plain PyMatching at every point. It raises the error suppression
+factor Λ (logical error per round at d, divided by that at d + 2) from 3.3
+to 5.2 at p = 0.3% (d = 5 to 7), and from 9.9 to 19 at p = 0.1%. The price
+is a second pass and the reweighting: correlated Union-Find takes about 3
+times as long as plain Union-Find, as PyMatching's correlated mode does
+against plain PyMatching. Against correlated PyMatching it is level at d = 5
+and 9, and faster from d = 13: 4.2 against 5.8 µs per round at d = 17 and
+p = 0.1% (`results/correlated_speed.csv`, one core).
+
+## 10. Limits
 
 - Graphlike error models only: hyperedges must be decomposed, which Stim
   does with `decompose_errors=True`. When two parallel edges flip different
   observables, the likelier one is kept and the conflict is counted.
+- The basis decomposition reads the stabilizer type from the coordinates of
+  Stim's rotated surface code circuits; for another layout, pass the types
+  (`decompose_by_basis(dem, basis)`), or the decoder falls back to the
+  model's own decomposition.
+- The regularization strength α is a parameter: the decoder does not know
+  the physical error rate. `regularization_strength(p)` gives the value the
+  benchmarks support.
 - At most 64 logical observables (one machine word per edge).
 - The parallel scheduling model is optimistic beyond 2 cores: on a 4-core
   laptop it predicted about 3x at 4 threads where 2x was measured, and over
   4x at 8 threads where hyperthreads made decoding slower. Its core counts
-  are lower bounds.
+  are lower bounds until `make scaling` is rerun on a machine with more
+  physical cores.
 - The window decoders need detectors numbered in time order, which holds for
   Stim circuits.
 
@@ -320,3 +431,11 @@ above are therefore lower bounds.
   computation*, Nat. Commun. 14, 7040 (2023)
 - X. Tan, F. Zhang, R. Chao, Y. Shi and J. Chen, *Scalable surface-code
   decoders with parallelization in time*, PRX Quantum 4, 040344 (2023)
+- A. G. Fowler, *Optimal complexity correction of correlated errors in the
+  surface code*, arXiv:1310.0863 (2013)
+- O. Higgott and C. Gidney, *Sparse Blossom: correcting a million errors per
+  core second with minimum-weight matching*, Quantum 9, 1600 (2025);
+  correlated matching in PyMatching since version 2.3
+- C. Hernando de la Fuente, J. Majaniemi, E. van Nieuwenburg and F. Frohnert,
+  *Correlated decoding loses the surface code's effective distance below
+  threshold*, arXiv:2610.26785 (2026)
