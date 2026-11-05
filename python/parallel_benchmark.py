@@ -119,12 +119,34 @@ def accuracy(shots: int, p: float):
 
 # ------------------------------------------------------------ scheduling model
 
-def phase_makespan(durations, workers):
-    """Tasks taken in order by whichever worker is free first."""
-    free = [0.0] * workers
-    for t in durations:
-        heapq.heappush(free, heapq.heappop(free) + t)
-    return max(free)
+def dataflow_makespan(cores, seams, workers):
+    """Makespan of one shot as ParallelWindowDecoder schedules it.
+
+    Workers take core windows in time order; the worker that finishes the
+    second core around a seam runs that seam at once, then takes the next core.
+    There is no barrier between cores and seams.
+    """
+    n = len(cores)
+    finish = [None] * n
+    events = []
+    next_core = 0
+    for w in range(min(workers, n)):
+        heapq.heappush(events, (cores[next_core], next_core, w))
+        next_core += 1
+    end = 0.0
+    while events:
+        t, i, w = heapq.heappop(events)
+        finish[i] = t
+        for j in (i - 1, i):  # seam j lies between cores j and j + 1
+            if 0 <= j < len(seams):
+                other = j if j != i else j + 1
+                if other >= n or (finish[other] is not None and finish[other] <= t):
+                    t += seams[j]
+        end = max(end, t)
+        if next_core < n:
+            heapq.heappush(events, (t + cores[next_core], next_core, w))
+            next_core += 1
+    return end
 
 
 def simulate_stream(cores, seams, n_cores, commit, buffer, seam):
@@ -201,11 +223,12 @@ def speedup(shots: int):
             kinds = [w[0] for w in one.windows]
             core_idx = [i for i, k in enumerate(kinds) if k == "core"]
             seam_idx = [i for i, k in enumerate(kinds) if k == "seam"]
-            # Model of the 2-thread run: both phases list-scheduled on 2 workers,
-            # plus the sequential part measured with one thread.
+            # Model of the 2-thread run: the decoder's own schedule (cores in
+            # order, each seam right after its second core) on 2 workers, plus
+            # the sequential part measured with one thread.
             serial = np.maximum(wall1 - work.sum(axis=1), 0.0)
-            model2 = np.array([phase_makespan(work[s, core_idx], 2) +
-                               phase_makespan(work[s, seam_idx], 2) for s in range(shots)])
+            model2 = np.array([dataflow_makespan(work[s, core_idx], work[s, seam_idx], 2)
+                               for s in range(shots)])
             model2 += serial
             # Bulk periods only (the first and the last two have other shapes).
             pairs = [(core_idx[i], seam_idx[i]) for i in range(1, len(core_idx) - 2)]
@@ -390,6 +413,20 @@ def cpu_name() -> str:
     return platform.processor() or "unknown CPU"
 
 
+def physical_cores() -> int | None:
+    """Physical cores on Linux (hyperthreads of one core counted once)."""
+    cores = set()
+    base = Path("/sys/devices/system/cpu")
+    for cpu in base.glob("cpu[0-9]*"):
+        try:
+            core = (cpu / "topology" / "core_id").read_text().strip()
+            pkg = (cpu / "topology" / "physical_package_id").read_text().strip()
+        except OSError:
+            continue
+        cores.add((pkg, core))
+    return len(cores) or None
+
+
 def thread_counts():
     n = os.cpu_count() or 1
     counts = [1]
@@ -401,8 +438,21 @@ def thread_counts():
 
 
 def scaling(shots: int):
+    """Real speedup with 1, 2, 4, ... threads, and where the rest goes.
+
+    speedup = threads x efficiency, and efficiency splits into
+      work inflation  total window work with t threads / with 1 thread: the
+                      same windows run slower when more cores are busy (lower
+                      all-core clock, shared caches and memory, hyperthreads);
+      busy fraction   window work / (t x wall time): the rest is threads
+                      waiting (load imbalance at the end of a shot, wake-ups).
+    The model replays the 1-thread window times through the decoder's own
+    schedule, so model / measured is exactly what inflation and waiting cost.
+    """
     counts = thread_counts()
-    print(f"{cpu_name()}, {os.cpu_count()} hardware threads: measuring {counts}")
+    phys = physical_cores()
+    print(f"{cpu_name()}, {os.cpu_count()} hardware threads"
+          f"{f', {phys} physical cores' if phys else ''}: measuring {counts}")
     rows = []
     for p in PS:
         for d in (9, 13, 17):
@@ -414,26 +464,35 @@ def scaling(shots: int):
             for x in dec.values():
                 x.decode_batch_bit_packed(packed[:10])
             wall = {t: np.full(shots, np.inf) for t in counts}
-            work = np.full((shots, dec[1].num_windows), np.inf)
+            work = {t: np.full(shots, np.inf) for t in counts}
+            windows1 = np.full((shots, dec[1].num_windows), np.inf)
             for _ in range(REPS):  # interleaved passes, best of REPS per shot
                 for t in counts:
                     wall[t] = np.minimum(wall[t], dec[t].shot_latency_ns(packed) / 1000.0)
-                work = np.minimum(work, dec[1].window_latency_ns(packed) / 1000.0)
+                    w = dec[t].window_latency_ns(packed) / 1000.0
+                    work[t] = np.minimum(work[t], w.sum(axis=1))
+                    if t == 1:
+                        windows1 = np.minimum(windows1, w)
             kinds = [w[0] for w in dec[1].windows]
             core_idx = [i for i, k in enumerate(kinds) if k == "core"]
             seam_idx = [i for i, k in enumerate(kinds) if k == "seam"]
-            serial = np.maximum(wall[1] - work.sum(axis=1), 0.0)
+            serial = np.maximum(wall[1] - windows1.sum(axis=1), 0.0)
             base = float(np.mean(wall[1]))
+            base_work = float(np.mean(work[1]))
             for t in counts:
-                model = serial + np.array([phase_makespan(work[s, core_idx], t) +
-                                           phase_makespan(work[s, seam_idx], t)
+                model = serial + np.array([dataflow_makespan(windows1[s, core_idx],
+                                                             windows1[s, seam_idx], t)
                                            for s in range(shots)])
-                rows.append({"d": d, "p": p, "threads": t, "wall_us": float(np.mean(wall[t])),
-                             "speedup": base / float(np.mean(wall[t])),
-                             "model_speedup": base / float(np.mean(model))})
-            line = "  ".join(f"{r['threads']:>2d}t {r['speedup']:5.2f}x (model {r['model_speedup']:5.2f}x)"
+                wt, kt = float(np.mean(wall[t])), float(np.mean(work[t]))
+                rows.append({"d": d, "p": p, "threads": t, "wall_us": wt,
+                             "speedup": base / wt,
+                             "model_speedup": base / float(np.mean(model)),
+                             "work_us": kt, "inflation": kt / base_work,
+                             "busy": kt / (t * wt)})
+            line = "  ".join(f"{r['threads']:>2d}t {r['speedup']:5.2f}x (model {r['model_speedup']:5.2f}x,"
+                             f" work x{r['inflation']:.2f}, busy {100 * r['busy']:3.0f}%)"
                              for r in rows if r["d"] == d and r["p"] == p)
-            print(f"p={p} d={d:2d}: {line}")
+            print(f"p={p} d={d:2d}: {line}", flush=True)
     SCALING_DIR.mkdir(parents=True, exist_ok=True)
     out = SCALING_DIR / "scaling.csv"
     with out.open("w", newline="") as f:
@@ -441,7 +500,8 @@ def scaling(shots: int):
         w.writeheader()
         w.writerows(rows)
     with (SCALING_DIR / "machine.txt").open("w") as f:
-        f.write(f"{cpu_name()}\n{os.cpu_count()} hardware threads\n{platform.platform()}\n")
+        f.write(f"{cpu_name()}\n{os.cpu_count()} hardware threads"
+                f"{f', {phys} physical cores' if phys else ''}\n{platform.platform()}\n")
     plot_scaling()
     print(f"wrote {out} and {SCALING_DIR / 'scaling.png'}: paste the lines above to compare")
 
