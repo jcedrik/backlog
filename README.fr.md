@@ -1,5 +1,7 @@
 # backlog
 
+[![CI](https://github.com/jcedrik/backlog/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jcedrik/backlog/actions/workflows/ci.yml)
+
 **Un décodeur de correction d'erreurs quantiques temps réel, bâti de zéro :
 de la simulation jusqu'au FPGA.**
 

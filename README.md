@@ -1,5 +1,7 @@
 # backlog
 
+[![CI](https://github.com/jcedrik/backlog/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jcedrik/backlog/actions/workflows/ci.yml)
+
 **A real-time quantum error correction decoder, built from scratch: from
 simulation to FPGA.**
 
