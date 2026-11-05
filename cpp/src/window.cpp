@@ -26,9 +26,10 @@ public:
     struct Shape {
         DecodingGraph graph;          // local graph, kept to build decoders
         std::vector<uint8_t> commit;  // local edge -> committed if chosen
+        ReweightRules rules;          // local reweighting rules (correlated decoding)
     };
 
-    WindowPlan(DecodingGraph graph, std::vector<int32_t> layer);
+    WindowPlan(DecodingGraph graph, std::vector<int32_t> layer, ReweightRules rules);
 
     // Window decoding layers [first, end) and committing [commit_begin, commit_end).
     void add(Window::Kind kind, int32_t first, int32_t end, int32_t commit_begin,
@@ -40,6 +41,7 @@ public:
 
     DecodingGraph g;
     std::vector<int32_t> layer;
+    ReweightRules rules;               // global rules, empty unless correlated
     std::vector<int32_t> layer_begin;  // first detector of each layer, size L + 1
     int32_t num_layers = 0;
     std::vector<Window> windows;
@@ -50,11 +52,16 @@ private:
     std::vector<int32_t> by_low_;          // edges sorted by low_
     std::vector<int32_t> by_high_;         // detector-detector edges sorted by high_
     std::map<std::vector<int64_t>, int32_t> signatures_;
+    std::vector<int32_t> local_of_;        // global edge -> local edge, -1 outside
     int32_t max_span_ = 0;
 };
 
-WindowPlan::WindowPlan(DecodingGraph graph, std::vector<int32_t> layers)
-    : g(std::move(graph)), layer(std::move(layers)) {
+WindowPlan::WindowPlan(DecodingGraph graph, std::vector<int32_t> layers, ReweightRules rules_in)
+    : g(std::move(graph)), layer(std::move(layers)), rules(std::move(rules_in)) {
+    if (!rules.empty()) {
+        validate_reweight_rules(g, rules);
+        local_of_.assign(static_cast<std::size_t>(g.num_edges()), -1);
+    }
     const int32_t n = g.num_detectors();
     const int32_t B = g.boundary();
     if (static_cast<int32_t>(layer.size()) != n) {
@@ -151,8 +158,27 @@ void WindowPlan::add(Window::Kind kind, int32_t first, int32_t end, int32_t comm
         w.edge_map.push_back(e);
     }
 
+    // Correlated decoding: the rules whose two edges are both in the window.
+    ReweightRules local_rules;
+    if (!rules.empty()) {
+        const std::size_t L = w.edge_map.size();
+        for (std::size_t i = 0; i < L; ++i) local_of_[w.edge_map[i]] = static_cast<int32_t>(i);
+        local_rules.offset.assign(L + 1, 0);
+        for (std::size_t i = 0; i < L; ++i) {
+            const int32_t ge = w.edge_map[i];
+            for (int32_t k = rules.offset[ge]; k < rules.offset[ge + 1]; ++k) {
+                const int32_t lf = local_of_[rules.target[k]];
+                if (lf < 0) continue;
+                local_rules.target.push_back(lf);
+                local_rules.weight.push_back(rules.weight[k]);
+            }
+            local_rules.offset[i + 1] = static_cast<int32_t>(local_rules.target.size());
+        }
+        for (int32_t ge : w.edge_map) local_of_[ge] = -1;
+    }
+
     std::vector<int64_t> sig;
-    sig.reserve(1 + 5 * edges.size());
+    sig.reserve(2 + 5 * edges.size() + 2 * local_rules.target.size());
     sig.push_back(num_local);
     for (std::size_t i = 0; i < edges.size(); ++i) {
         sig.push_back(edges[i].a);
@@ -161,14 +187,21 @@ void WindowPlan::add(Window::Kind kind, int32_t first, int32_t end, int32_t comm
         sig.push_back(weights[i]);
         sig.push_back(commit[i]);
     }
+    sig.push_back(-1);  // rules follow
+    for (int32_t o : local_rules.offset) sig.push_back(o);
+    for (std::size_t k = 0; k < local_rules.target.size(); ++k) {
+        sig.push_back(local_rules.target[k]);
+        sig.push_back(local_rules.weight[k]);
+    }
     auto found = signatures_.find(sig);
     if (found != signatures_.end()) {
         w.shape = found->second;
     } else {
         w.shape = static_cast<int32_t>(shapes.size());
+        if (local_rules.target.empty()) local_rules = ReweightRules{};
         shapes.push_back(Shape{DecodingGraph(num_local, g.num_observables(), std::move(edges),
                                              std::move(weights)),
-                               std::move(commit)});
+                               std::move(commit), std::move(local_rules)});
         signatures_.emplace(std::move(sig), w.shape);
     }
     windows.push_back(std::move(w));
@@ -326,8 +359,9 @@ static double elapsed_ns(Clock::time_point t0) {
 // SlidingWindowDecoder
 
 SlidingWindowDecoder::SlidingWindowDecoder(DecodingGraph graph, std::vector<int32_t> layer,
-                                           int32_t commit_layers, int32_t buffer_layers)
-    : plan_(std::make_unique<WindowPlan>(std::move(graph), std::move(layer))) {
+                                           int32_t commit_layers, int32_t buffer_layers,
+                                           ReweightRules rules)
+    : plan_(std::make_unique<WindowPlan>(std::move(graph), std::move(layer), std::move(rules))) {
     if (commit_layers < 1) throw std::invalid_argument("commit_layers must be >= 1");
     if (buffer_layers < 0) throw std::invalid_argument("buffer_layers must be >= 0");
     WindowPlan& p = *plan_;
@@ -341,7 +375,7 @@ SlidingWindowDecoder::SlidingWindowDecoder(DecodingGraph graph, std::vector<int3
     }
     p.finish();
     for (const WindowPlan::Shape& shape : p.shapes) {
-        decoders_.push_back(std::make_unique<UnionFindDecoder>(shape.graph));
+        decoders_.push_back(std::make_unique<UnionFindDecoder>(shape.graph, shape.rules));
     }
     const std::size_t n = static_cast<std::size_t>(p.g.num_detectors());
     residual_.assign(n, 0);
@@ -358,6 +392,8 @@ int32_t SlidingWindowDecoder::num_windows() const {
 int32_t SlidingWindowDecoder::num_shapes() const {
     return static_cast<int32_t>(plan_->shapes.size());
 }
+
+bool SlidingWindowDecoder::correlated() const { return !plan_->rules.empty(); }
 const std::vector<Window>& SlidingWindowDecoder::windows() const { return plan_->windows; }
 
 uint64_t SlidingWindowDecoder::run(const int32_t* fired, std::size_t count,
@@ -505,8 +541,9 @@ struct ParallelWindowDecoder::Result {
 
 ParallelWindowDecoder::ParallelWindowDecoder(DecodingGraph graph, std::vector<int32_t> layer,
                                              int32_t commit_layers, int32_t buffer_layers,
-                                             int32_t seam_layers, int32_t threads)
-    : plan_(std::make_unique<WindowPlan>(std::move(graph), std::move(layer))) {
+                                             int32_t seam_layers, int32_t threads,
+                                             ReweightRules rules)
+    : plan_(std::make_unique<WindowPlan>(std::move(graph), std::move(layer), std::move(rules))) {
     if (commit_layers < 1) throw std::invalid_argument("commit_layers must be >= 1");
     if (buffer_layers < 0) throw std::invalid_argument("buffer_layers must be >= 0");
     if (seam_layers < 1) throw std::invalid_argument("seam_layers must be >= 1");
@@ -537,7 +574,7 @@ ParallelWindowDecoder::ParallelWindowDecoder(DecodingGraph graph, std::vector<in
     decoders_.resize(static_cast<std::size_t>(threads));
     for (auto& per_thread : decoders_) {
         for (const WindowPlan::Shape& shape : p.shapes) {
-            per_thread.push_back(std::make_unique<UnionFindDecoder>(shape.graph));
+            per_thread.push_back(std::make_unique<UnionFindDecoder>(shape.graph, shape.rules));
         }
     }
     scratch_.resize(static_cast<std::size_t>(threads));
@@ -556,6 +593,8 @@ int32_t ParallelWindowDecoder::num_windows() const {
 int32_t ParallelWindowDecoder::num_shapes() const {
     return static_cast<int32_t>(plan_->shapes.size());
 }
+
+bool ParallelWindowDecoder::correlated() const { return !plan_->rules.empty(); }
 const std::vector<Window>& ParallelWindowDecoder::windows() const { return plan_->windows; }
 
 uint64_t ParallelWindowDecoder::run(const int32_t* fired, std::size_t count,

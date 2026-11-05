@@ -77,8 +77,11 @@ public:
     // layer[v] is the time layer of detector v. Layers must be non-decreasing
     // with the detector id, which holds for Stim circuits (detectors are
     // declared in time order). commit_layers >= 1, buffer_layers >= 0.
+    // Non-empty `rules` (on the global graph) make every window decode in two
+    // correlated passes, with the rules whose two edges are both in the window.
     SlidingWindowDecoder(DecodingGraph graph, std::vector<int32_t> layer,
-                         int32_t commit_layers, int32_t buffer_layers);
+                         int32_t commit_layers, int32_t buffer_layers,
+                         ReweightRules rules = {});
     ~SlidingWindowDecoder();
     SlidingWindowDecoder(const SlidingWindowDecoder&) = delete;
     SlidingWindowDecoder& operator=(const SlidingWindowDecoder&) = delete;
@@ -87,6 +90,7 @@ public:
     int32_t num_layers() const;
     int32_t num_windows() const;
     int32_t num_shapes() const;
+    bool correlated() const;
     const std::vector<Window>& windows() const;
 
     // fired: detector ids, any order; a detector listed twice cancels out.
@@ -134,7 +138,8 @@ public:
     // Stim memory circuits). threads >= 1, including the calling thread.
     ParallelWindowDecoder(DecodingGraph graph, std::vector<int32_t> layer,
                           int32_t commit_layers, int32_t buffer_layers,
-                          int32_t seam_layers, int32_t threads);
+                          int32_t seam_layers, int32_t threads,
+                          ReweightRules rules = {});
     ~ParallelWindowDecoder();
     ParallelWindowDecoder(const ParallelWindowDecoder&) = delete;
     ParallelWindowDecoder& operator=(const ParallelWindowDecoder&) = delete;
@@ -144,6 +149,7 @@ public:
     int32_t num_threads() const;
     int32_t num_windows() const;
     int32_t num_shapes() const;
+    bool correlated() const;
     // In time order: core, seam, core, seam, ..., possibly ending with a seam.
     const std::vector<Window>& windows() const;
 

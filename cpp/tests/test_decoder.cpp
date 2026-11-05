@@ -433,16 +433,18 @@ void test_window_shapes_are_shared() {
 
 void test_window_fuzz(int num_graphs, int shots_per_graph) {
     std::mt19937_64 rng(20261105);
-    long long cases = 0, invalid = 0, inconsistent = 0, differ = 0;
+    long long cases = 0, invalid = 0, inconsistent = 0, differ = 0, correlated = 0;
     for (int gi = 0; gi < num_graphs; ++gi) {
         LayeredGraph lg = random_layered_graph(rng, gi % 10 == 0);
         const DecodingGraph& g = lg.graph;
         const int32_t L = lg.layer.back() + 1;
         const int32_t C = 1 + static_cast<int32_t>(rng() % 3);
         const int32_t B = static_cast<int32_t>(rng() % 4);
-        SlidingWindowDecoder win(g, lg.layer, C, B);
-        SlidingWindowDecoder single(g, lg.layer, L, static_cast<int32_t>(rng() % 3));
-        UnionFindDecoder whole(g);
+        const ReweightRules rules = (gi % 2) ? random_rules(rng, g) : ReweightRules{};
+        if (!rules.empty()) ++correlated;
+        SlidingWindowDecoder win(g, lg.layer, C, B, rules);
+        SlidingWindowDecoder single(g, lg.layer, L, static_cast<int32_t>(rng() % 3), rules);
+        UnionFindDecoder whole(g, rules);
         CHECK(single.num_windows() == 1);
         std::uniform_real_distribution<double> unit(0.0, 1.0);
         const double q = 0.05 + 0.45 * unit(rng);
@@ -464,9 +466,9 @@ void test_window_fuzz(int num_graphs, int shots_per_graph) {
             if (a.correction != b.correction || a.observables != b.observables) ++differ;
         }
     }
-    std::printf("windows: %lld random cases, %lld invalid corrections, %lld inconsistent, "
-                "%lld differences with whole-shot decoding\n",
-                cases, invalid, inconsistent, differ);
+    std::printf("windows: %lld random cases (%lld graphs correlated), %lld invalid corrections, "
+                "%lld inconsistent, %lld differences with whole-shot decoding\n",
+                cases, correlated, invalid, inconsistent, differ);
     CHECK(invalid == 0);
     CHECK(inconsistent == 0);
     CHECK(differ == 0);
@@ -552,7 +554,8 @@ void test_parallel_layout() {
 
 void test_parallel_fuzz(int num_graphs, int shots_per_graph) {
     std::mt19937_64 rng(20261106);
-    long long cases = 0, invalid = 0, inconsistent = 0, thread_dependent = 0, differ = 0;
+    long long cases = 0, invalid = 0, inconsistent = 0, thread_dependent = 0, differ = 0,
+              correlated = 0;
     for (int gi = 0; gi < num_graphs; ++gi) {
         LayeredGraph lg = random_layered_graph(rng, gi % 10 == 0);
         const DecodingGraph& g = lg.graph;
@@ -560,10 +563,12 @@ void test_parallel_fuzz(int num_graphs, int shots_per_graph) {
         const int32_t C = 1 + static_cast<int32_t>(rng() % 3);
         const int32_t B = static_cast<int32_t>(rng() % 4);
         const int32_t G = std::max<int32_t>(max_span(lg), 1 + static_cast<int32_t>(rng() % 3));
-        ParallelWindowDecoder one_thread(g, lg.layer, C, B, G, 1);
-        ParallelWindowDecoder three_threads(g, lg.layer, C, B, G, 3);
-        ParallelWindowDecoder single(g, lg.layer, L, static_cast<int32_t>(rng() % 3), G, 2);
-        UnionFindDecoder whole(g);
+        const ReweightRules rules = (gi % 2) ? random_rules(rng, g) : ReweightRules{};
+        if (!rules.empty()) ++correlated;
+        ParallelWindowDecoder one_thread(g, lg.layer, C, B, G, 1, rules);
+        ParallelWindowDecoder three_threads(g, lg.layer, C, B, G, 3, rules);
+        ParallelWindowDecoder single(g, lg.layer, L, static_cast<int32_t>(rng() % 3), G, 2, rules);
+        UnionFindDecoder whole(g, rules);
         CHECK(single.num_windows() == 1);
         std::uniform_real_distribution<double> unit(0.0, 1.0);
         const double q = 0.05 + 0.45 * unit(rng);
@@ -591,9 +596,10 @@ void test_parallel_fuzz(int num_graphs, int shots_per_graph) {
             if (a.correction != b.correction || a.observables != b.observables) ++differ;
         }
     }
-    std::printf("parallel windows: %lld random cases, %lld invalid corrections, %lld inconsistent, "
-                "%lld depend on the thread count, %lld differences with whole-shot decoding\n",
-                cases, invalid, inconsistent, thread_dependent, differ);
+    std::printf("parallel windows: %lld random cases (%lld graphs correlated), %lld invalid "
+                "corrections, %lld inconsistent, %lld depend on the thread count, %lld "
+                "differences with whole-shot decoding\n",
+                cases, correlated, invalid, inconsistent, thread_dependent, differ);
     CHECK(invalid == 0);
     CHECK(inconsistent == 0);
     CHECK(thread_dependent == 0);
