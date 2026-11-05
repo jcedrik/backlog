@@ -32,7 +32,6 @@ import argparse
 import csv
 import math
 import os
-import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -40,8 +39,7 @@ import numpy as np
 import pymatching
 import stim
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import backlog  # noqa: E402
+import backlog
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 ACCURACY_CSV = os.path.join(RESULTS, "correlated_accuracy.csv")

@@ -27,15 +27,13 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import sys
 import time
 
 import numpy as np
 import pymatching
 import stim
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import backlog  # noqa: E402
+import backlog
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 CSV = os.path.join(RESULTS, "fault_distance.csv")
