@@ -7,7 +7,7 @@ rebuilds the test binary and runs it. A mutant is "killed" when the suite
 fails (a check fails, fast and reference decoders disagree, or the run hangs
 and hits the timeout). Any surviving mutant is a hole in the tests.
 
-    python3 scripts/mutation_test.py        # about seven minutes
+    python3 scripts/mutation_test.py        # about ten minutes
 """
 from __future__ import annotations
 
@@ -106,10 +106,38 @@ MUTANTS = [
            "src/window.cpp",
            "              WindowPlan::Side::Open, WindowPlan::Side::Open);",
            "              WindowPlan::Side::Closed, WindowPlan::Side::Open);"),
-    Mutant("parallel: seams ignore the flips from the cores",
+    Mutant("parallel: seams ignore the flips from the core before them",
            "src/window.cpp",
-           "            s.local.insert(s.local.end(), seam_flips_[k].begin(), seam_flips_[k].end());\n",
+           "            s.local.insert(s.local.end(), from_before_[k].begin(), from_before_[k].end());\n",
            ""),
+    Mutant("parallel: a seam runs as soon as one of its two cores is done",
+           "src/window.cpp",
+           "pending_[k].store(k + 1 < num_windows ? 2 : 1, std::memory_order_relaxed);",
+           "pending_[k].store(1, std::memory_order_relaxed);"),
+    # Correlated decoding
+    Mutant("correlated: the second pass is not reweighted",
+           "src/decoder.cpp",
+           "    apply_rules();\n", ""),
+    Mutant("correlated: a rule may raise a weight it should only lower",
+           "src/decoder.cpp",
+           "            if (w >= t.weight) continue;\n", ""),
+    Mutant("correlated: a lowered edge keeps its place in the sorted adjacency",
+           "src/decoder.cpp",
+           "if (wp < w || (wp == w && prev.edge < f)) break;",
+           "break;"),
+    Mutant("correlated: weights are not restored after the shot",
+           "src/decoder.cpp",
+           "        topo_[it->first].weight = it->second;\n", ""),
+    Mutant("correlated: adjacency order is not restored after the shot",
+           "src/decoder.cpp",
+           "        std::copy(saved, saved + len, sadj_.data() + sadj_offset_[v]);\n", ""),
+    Mutant("correlated: the reweighting strength alpha is ignored",
+           "src/decoder.cpp",
+           "std::min(0.5, alpha * q)", "std::min(0.5, q)"),
+    Mutant("correlated: windows drop every correlation",
+           "src/window.cpp",
+           "const int32_t lf = local_of_[rules.target[k]];",
+           "const int32_t lf = -1;"),
 ]
 
 
@@ -131,15 +159,16 @@ def run_suite(binary: Path) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, f"hang, stopped after {TIMEOUT_S} s"
     out = r.stdout
-    mism = re.search(r"(\d+) mismatches", out)
+    mism = sum(int(x) for x in re.findall(r"(\d+) mismatches", out))
     fails = re.search(r"(\d+) checks, (\d+) failures", out)
     if r.returncode == 0:
         return True, "suite passed"
     parts = []
-    if mism and int(mism.group(1)):
-        parts.append(f"{int(mism.group(1))} fast/reference mismatches")
+    if mism:
+        parts.append(f"{mism} fast/reference mismatches")
     for prefix in ("windows", "parallel windows"):
-        found = re.search(rf"^{prefix}: \d+ random cases, (\d+) invalid corrections", out, re.M)
+        found = re.search(rf"^{prefix}: \d+ random cases(?: \([^)]*\))?, (\d+) invalid corrections",
+                          out, re.M)
         if found and int(found.group(1)):
             parts.append(f"{int(found.group(1))} invalid corrections ({prefix})")
     if not parts and fails and int(fails.group(2)):
