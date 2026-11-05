@@ -1,7 +1,8 @@
 # C++ core
 
-The weighted Union-Find decoder and its sliding-window (streaming) version,
-with no dependencies (C++17 standard library only). The same code backs three
+The weighted Union-Find decoder and its streaming versions (sliding windows
+on one core, parallel windows on a thread pool), with no dependencies (C++17
+standard library and threads only). The same code backs three
 front ends:
 
 - the Python package `backlog` (pybind11 bindings in `bindings/module.cpp`,
@@ -18,13 +19,13 @@ How the algorithm works and why the fast version equals the reference:
 ```
 include/backlog/graph.hpp     DecodingGraph: edges, probabilities, integer weights
 include/backlog/decoder.hpp   UnionFindDecoder (fast), ReferenceDecoder (spec)
-include/backlog/window.hpp    SlidingWindowDecoder (streaming)
+include/backlog/window.hpp    SlidingWindowDecoder, ParallelWindowDecoder (streaming)
 src/graph.cpp                 weights from log-likelihoods, validation, file loader
 src/decoder.cpp               event-driven weighted growth, peeling
 src/reference.cpp             synchronous unit rounds, the specification
-src/window.cpp                windows, commits, shared window decoders
+src/window.cpp                window plan, commits, thread pool, both window decoders
 src/main.cpp                  command-line decoder with latency statistics
-tests/test_decoder.cpp        unit tests + fuzzing: fast == reference, windows
+tests/test_decoder.cpp        unit tests + fuzzing: fast == reference, both window decoders
 bindings/module.cpp           Python module backlog._core
 ```
 
@@ -41,12 +42,14 @@ Expected output of `./build/backlog_tests`:
 ```
 fuzz: 75000 random cases, 0 mismatches between fast and reference
 windows: 75000 random cases, 0 invalid corrections, 0 inconsistent, 0 differences with whole-shot decoding
-303108 checks, 0 failures
+parallel windows: 75000 random cases, 0 invalid corrections, 0 inconsistent, 0 depend on the thread count, 0 differences with whole-shot decoding
+306190 checks, 0 failures
 ALL C++ TESTS PASSED
 ```
 
-From the repo root, `make mutants` checks that the suite fails on each of 16
-injected bugs.
+From the repo root, `make mutants` checks that the suite fails on each of 18
+injected bugs, and `make tsan` runs the suite under ThreadSanitizer
+(`-DBACKLOG_TSAN=ON`).
 
 ## Command-line decoder
 

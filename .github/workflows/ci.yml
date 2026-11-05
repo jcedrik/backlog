@@ -32,6 +32,16 @@ jobs:
       - name: Command-line decoder on graphs exported from Stim
         run: make test-cli
 
+      - name: C++ tests under ThreadSanitizer (no data race allowed)
+        # ubuntu-24.04 runners boot with vm.mmap_rnd_bits=32, which collides
+        # with ThreadSanitizer's shadow memory ("unexpected memory mapping",
+        # google/sanitizers#1716). Lowering it is the usual workaround and
+        # does not touch the code under test.
+        run: |
+          sudo sysctl -w vm.mmap_rnd_bits=28
+          sudo sysctl -w kernel.randomize_va_space=0
+          make tsan
+
       - name: Mutation testing (every injected bug must be caught)
         run: make mutants
 

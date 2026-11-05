@@ -14,8 +14,9 @@ qu'elles apparaissent. Si le décodeur est plus lent que le flux de syndromes,
 le retard s'accumule et le calcul ralentit de façon exponentielle. Sur une
 puce supraconductrice, un cycle de correction dure environ 1 microseconde :
 le décodeur a donc un budget temps réel strict. Ce projet construit un
-décodeur pour ce problème, le mesure honnêtement à chaque étape, et montre le
-retard qui s'accumule quand le décodeur décroche.
+décodeur pour ce problème, le mesure honnêtement à chaque étape, montre le
+retard qui s'accumule quand un seul cœur décroche, et le fait disparaître
+avec des fenêtres en parallèle.
 
 ## Résultats
 
@@ -41,16 +42,20 @@ d'erreur valent un écart-type.
   décodeur est 15 à 19 % plus rapide à p = 0,1 % à partir de d = 9, à égalité
   à p = 0,3 %, et plus lent à d = 3 (les reprises concordent à environ 5 %
   près).
-- **Le décodage en flux continu marche, jusqu'à un certain point.** Une
-  fenêtre glissante avec un buffer de d rondes coûte au plus 2,3 % d'erreurs
+- **Le flux continu marche, et passe à l'échelle avec les cœurs.** Des
+  fenêtres avec un buffer de d rondes coûtent au plus 2,3 % d'erreurs
   logiques. Un seul cœur suit des rondes de 1 µs jusqu'à d = 9 à p = 0,1 % et
-  jusqu'à d = 5 à p = 0,3 %. Au-delà, le retard s'accumule, et la figure
-  ci-dessous le montre.
+  jusqu'à d = 5 à p = 0,3 % ; au-delà, le retard s'accumule. Les fenêtres en
+  parallèle répartissent le travail : 1,6 à 1,85 fois plus rapide sur 2 vrais
+  cœurs, et d'après les temps mesurés de chaque fenêtre, 4 cœurs suivent
+  jusqu'à d = 17 à p = 0,1 %, 15 cœurs à p = 0,3 %.
 - **Même réponse qu'une référence lente et évidemment correcte.** Le décodeur
   rapide rend exactement la même correction qu'une implémentation de
-  référence sur 75 000 cas aléatoires, et le test par mutation montre que les
-  tests attrapent 16 bogues injectés sur 16. Le fonctionnement est expliqué
-  dans [docs/decoder.md](docs/decoder.md) (en anglais).
+  référence sur 75 000 cas aléatoires, le décodeur parallèle donne la même
+  réponse peu importe le nombre de threads, sans aucune course de données
+  sous ThreadSanitizer, et le test par mutation montre que les tests
+  attrapent 18 bogues injectés sur 18. Le fonctionnement est expliqué dans
+  [docs/decoder.md](docs/decoder.md) (en anglais).
 
 ![Taux d'erreur logique d'Union-Find relatif à PyMatching](results/accuracy_vs_pymatching.png)
 
@@ -81,8 +86,37 @@ Le flux continu coûte environ deux fois le travail du décodage entier par
 ronde, puisque chaque ronde est décodée une fois dans un buffer et une fois
 dans une région de commit. Suivre en moyenne ne dit pas tout non plus : à
 d = 9 et p = 0,1 %, le cœur est occupé 73 % du temps, et une rafale de
-fenêtres difficiles a poussé un délai jusqu'à 1,3 ms. Aller plus loin demande
-des fenêtres en parallèle sur plusieurs cœurs, ou du matériel.
+fenêtres difficiles a poussé un délai jusqu'à 1,3 ms.
+
+### Fenêtres en parallèle : plus de cœurs, plus de backlog
+
+![Décodage en fenêtres parallèles : précision, accélération réelle sur 2 cœurs, cœurs nécessaires, backlog selon le nombre de cœurs](results/parallel.png)
+
+`ParallelWindowDecoder` décode toutes les fenêtres « cœur » d'un coup
+(commit de d rondes, buffer de d de chaque côté), puis toutes les coutures
+entre elles, d'un coup aussi
+([fonctionnement](docs/decoder.md#8-parallel-windows-more-cores-no-backlog)).
+
+- **En haut à gauche : aucune précision perdue.** 0,8 à 1,3 % plus d'erreurs
+  logiques que le décodage entier sur les mêmes tirages, comme les fenêtres
+  glissantes.
+- **En haut à droite : accélération réelle.** 2 threads vont 1,6 à 1,85 fois
+  plus vite qu'un seul sur cette machine à 2 cœurs à partir de d = 7. Un
+  modèle d'ordonnancement bâti sur le temps mesuré de chaque fenêtre prédit
+  le temps à 2 threads à 12 % près à partir de d = 9 (il ignore la
+  synchronisation, donc il est un peu optimiste).
+- **En bas : combien de cœurs pour le temps réel.** Le modèle sur un flux de
+  rondes de 1 µs, avec 15 % de marge pour son optimisme :
+
+| d | 9 | 11 | 13 | 15 | 17 |
+|---|---|---|---|---|---|
+| cœurs, p = 0,1 % | 1 | 2 | 3 | 3 | 4 |
+| cœurs, p = 0,3 % | 4 | 6 | 8 | 11 | 15 |
+
+Avec moins de cœurs, le délai croît sans limite (en bas à droite, d = 17) ;
+avec ceux-là, il reste sous environ une milliseconde. Le prix est la latence :
+la ronde la plus vieille d'une couture attend environ 3 d rondes de données
+avant que son commit puisse commencer.
 
 ### Débit sur des expériences complètes
 
@@ -133,6 +167,10 @@ print("taux d'erreur logique :", (predictions != obs).any(axis=1).mean())
 window = backlog.SlidingWindowDecoder.from_circuit(circuit, commit=5, buffer=5)
 print("en fenêtres :", (window.decode_batch(dets) != obs).any(axis=1).mean())
 print(window.windows[:3])  # (première ronde, fin du commit, fin de la fenêtre)
+
+# Fenêtres en parallèle sur 2 threads (même réponse peu importe le nombre de threads)
+parallel = backlog.ParallelWindowDecoder.from_circuit(circuit, commit=5, buffer=5, threads=2)
+print("en parallèle :", (parallel.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
 Comme décodeurs sinter, en Python :
@@ -152,16 +190,20 @@ sinter collect --circuits circuit.stim --decoders backlog-uf pymatching \
     --max_shots 100000 --processes 4 --save_resume_filepath stats.csv
 ```
 
-`backlog-uf-unweighted` est aussi disponible, pour comparer.
+`backlog-uf-unweighted` est aussi disponible, pour comparer, et
+`backlog.SinterParallelWindowDecoder(commit=5, buffer=5)` pour les fenêtres en
+parallèle.
 
 ## Reproduire
 
 ```bash
 pip install -r requirements.txt && make install   # dans un virtualenv
 make test        # tests C++ et fuzzing, pytest, vérifications en ligne de commande
-make mutants     # test par mutation, environ deux minutes
+make mutants     # test par mutation, environ sept minutes
+make tsan        # tests C++ sous ThreadSanitizer
 make compare     # balayage PyMatching contre Union-Find avec sinter (long, reprenable)
 make streaming   # fenêtres glissantes : précision, latence, backlog (quelques minutes)
+make parallel    # fenêtres en parallèle : précision, accélération, cœurs nécessaires
 make latency     # temps de décodage des expériences complètes, sur une machine au repos
 make hw-sim      # simulation VHDL bit pour bit (requiert ghdl)
 make hw          # synthèse VHDL, placement-routage (requiert yosys, nextpnr-ice40)
@@ -179,16 +221,18 @@ make help        # tout le reste
    arête : 75 000 cas aléatoires (arêtes parallèles comprises), plus de vrais
    modèles d'erreurs de surface code.
 3. **Les fenêtres sont vérifiées de la même façon.** Sur 75 000 graphes en
-   couches générés aléatoirement, avec des tailles de fenêtre aléatoires, les
-   corrections commitées reproduisent toujours le syndrome, et une seule
-   fenêtre qui couvre toutes les rondes donne exactement la réponse du
-   décodage entier. Un test unitaire fixe le cas des erreurs coupées par le
-   bord de la fenêtre.
-4. **Les tests attrapent les bogues.** `make mutants` injecte 16 bogues
+   couches générés aléatoirement pour chaque décodeur à fenêtres, avec des
+   tailles de fenêtre aléatoires, les corrections commitées reproduisent
+   toujours le syndrome, et une seule fenêtre qui couvre toutes les rondes
+   donne exactement la réponse du décodage entier. Le décodeur parallèle doit
+   donner la même correction avec 1 et 3 threads, et la suite passe sans
+   erreur sous ThreadSanitizer. Des tests unitaires fixent le cas des
+   erreurs coupées par le bord d'une fenêtre.
+4. **Les tests attrapent les bogues.** `make mutants` injecte 18 bogues
    réalistes, un à la fois (mauvais taux de croissance, rayon perdu à la
    fusion, forêt qui ignore les poids, inversions de syndrome pas reportées,
-   fenêtres qui ne se chevauchent pas...) et exige que la suite échoue à
-   chaque fois.
+   coutures qui ignorent les inversions des cœurs...) et exige que la suite
+   échoue à chaque fois.
 5. **La précision a un seuil d'échec.** pytest échoue si l'Union-Find pondéré
    dépasse 1,35 fois le taux d'erreur logique de PyMatching à d = 5,
    p = 0,5 %, ou si un buffer de d rondes coûte plus de 5 % par rapport au
@@ -204,8 +248,8 @@ Tout ça roule dans la CI à chaque push.
 
 ```
 src/backlog/   paquet Python : conversion du modèle d'erreurs, décodeurs, plugin sinter
-cpp/           cœur C++17 (aucune dépendance) : décodeurs rapide, de référence et en
-               fenêtres glissantes, tests, CLI, liaisons
+cpp/           cœur C++17 (aucune dépendance) : décodeurs rapide, de référence, en
+               fenêtres glissantes et en fenêtres parallèles, tests, CLI, liaisons
 tests/         pytest : seuils de précision, fenêtres, intégration sinter
 python/        expériences : circuits, balayages, bancs d'essai, figures
 hardware/      cœur VHDL 1D : modèle de référence, RTL, testbench, synthèse, placement-routage
@@ -216,11 +260,13 @@ docs/          fonctionnement du décodeur, feuille de route
 
 ## Limites
 
-- **Un cœur, fenêtres dans l'ordre.** Les chiffres de flux continu viennent
-  de fenêtres décodées l'une après l'autre sur un seul cœur. La simulation du
-  backlog enchaîne des fenêtres mesurées sur des tirages indépendants, une
-  approximation d'une longue expérience. Les fenêtres en parallèle sont la
-  prochaine étape.
+- **Des modèles au-delà de 2 cœurs.** Cette machine a 2 cœurs. Les nombres
+  de cœurs ci-dessus viennent d'un modèle d'ordonnancement bâti sur les temps
+  mesurés de chaque fenêtre, vérifié contre la vraie exécution à 2 threads
+  seulement ; une grosse machine ajoute de la contention mémoire et cache que
+  le modèle ne voit pas. Les simulations de flux enchaînent des fenêtres
+  mesurées sur des tirages indépendants, une approximation d'une longue
+  expérience.
 - **Égalité de vitesse, pas une victoire.** À p = 0,3 %, ce décodeur ne fait
   qu'égaler PyMatching 2 sur un cœur.
 - **Précision.** L'Union-Find pondéré fait encore 5 à 20 % plus d'erreurs
@@ -240,8 +286,9 @@ docs/          fonctionnement du décodeur, feuille de route
 
 Fait : baseline Stim + PyMatching, Union-Find pondéré piloté par événements
 avec intégration sinter, décodage en fenêtres glissantes avec le backlog
-mesuré, cœur VHDL 1D. À venir : fenêtres en parallèle sur plusieurs cœurs,
-scan préfixe parallèle dans le cœur VHDL, puis un cœur 2D de surface code.
-Détails dans [docs/roadmap.md](docs/roadmap.md).
+mesuré, fenêtres en parallèle qui le font disparaître avec assez de cœurs,
+cœur VHDL 1D. À venir : scan préfixe parallèle dans le cœur VHDL, puis un
+cœur 2D de surface code, pour qu'un petit FPGA fasse le travail de plusieurs
+cœurs de CPU. Détails dans [docs/roadmap.md](docs/roadmap.md).
 
 Les références et la licence (MIT) sont dans la [version anglaise](README.md).

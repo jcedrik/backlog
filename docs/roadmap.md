@@ -9,7 +9,7 @@ in the README, reproducible with one `make` target, and covered by CI.
 - PyMatching threshold sweep with sinter: `make baseline`, `make plot`
 - Result: threshold about 0.73% (crossing of d = 5 and d = 7)
 
-## Phase 2: C++ Union-Find decoder (v0.3 done)
+## Phase 2: C++ Union-Find decoder (v0.4 done)
 
 Done:
 - [x] Union-Find growth + peeling, dependency free, CLI on plain-text graphs
@@ -22,7 +22,7 @@ Done:
       PyMatching 2 on one core, d = 3 to 13
 - [x] Reference decoder + fuzzing: fast and reference corrections identical
       on 75,000 random cases, parallel edges included
-- [x] Mutation testing: 16 injected bugs, all caught (`make mutants`)
+- [x] Mutation testing: 18 injected bugs, all caught (`make mutants`)
 - [x] Python package (pybind11, `pip install .`) and sinter custom decoders,
       sinter command line included
 - [x] Streaming: sliding windows (commit, buffer), windows with the same
@@ -31,13 +31,18 @@ Done:
       rounds (at most 2.3% more logical errors, same shots)
 - [x] Backlog measured: one core keeps up with 1 µs rounds to d = 9 at
       p = 0.1% and to d = 5 at p = 0.3%, and falls behind beyond
+- [x] Parallel windows (Skoric et al. 2023, Tan et al. 2023): core windows,
+      then seams, on a thread pool; same answer for any thread count, clean
+      under ThreadSanitizer, accuracy within 1.3% of whole-shot decoding
+- [x] Real speedup 1.6 to 1.85x on 2 cores; a scheduling model checked
+      against it gives the cores needed: 4 at p = 0.1% and 15 at p = 0.3%
+      for d = 17, with 15% headroom
 
 Next:
-- [ ] Parallel windows (Skoric et al. 2023, Tan et al. 2023): decode
-      independent windows on several cores, then the seams between them.
-      Throughput should scale with cores, the way past the single-core limit
-- [ ] Report the logical clock cost: how long a feed-forward decision waits
-      for its window
+- [ ] Run the parallel decoder on a many-core machine to check the model
+      beyond 2 cores (memory and cache contention)
+- [ ] Logical clock cost: report how long a feed-forward decision waits for
+      its window, and shrink it (smaller seams, earlier commits)
 - [ ] Faster than PyMatching 2 at p = 0.3%: profile shows no single hotspot,
       so this needs an algorithmic change, not tuning
 
@@ -70,8 +75,9 @@ Next:
 - [x] A latency table (CPU, and ns per cycle after place and route)
 - [x] Tests that prove correctness, not just that code runs
 - [x] An honest limitations section
-- [x] The CV line: "Streaming QEC decoder (weighted Union-Find, C++, pip,
-      sinter): threshold matches PyMatching within error bars, sliding
-      windows within 2.3% of whole-shot accuracy, real-time on one core to
-      d = 9 at p = 0.1%; bit-exact against a reference on 75,000 fuzzed cases;
-      1D VHDL core placed and routed at 94.5 MHz"
+- [x] The CV line: "Real-time QEC decoder (weighted Union-Find, C++17,
+      multithreaded, pip and sinter): threshold matches PyMatching within error
+      bars; parallel sliding windows within 1.3% of whole-shot accuracy, 1.6 to
+      1.85x speedup on 2 cores; fuzzed against a reference, race-free under
+      ThreadSanitizer, 18/18 mutants caught; 1D VHDL core placed and routed at
+      94.5 MHz"

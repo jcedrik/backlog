@@ -7,7 +7,7 @@ rebuilds the test binary and runs it. A mutant is "killed" when the suite
 fails (a check fails, fast and reference decoders disagree, or the run hangs
 and hits the timeout). Any surviving mutant is a hole in the tests.
 
-    python3 scripts/mutation_test.py        # about two minutes
+    python3 scripts/mutation_test.py        # about seven minutes
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TIMEOUT_S = 30            # the unmutated suite runs in about 1.5 s
+TIMEOUT_S = 60            # the unmutated suite runs in about 8 s
 MEMORY_CAP = 1 << 30      # a runaway mutant must not take the machine down
 
 
@@ -78,31 +78,38 @@ MUTANTS = [
     Mutant("log-likelihood weights collapse to uniform",
            "src/graph.cpp",
            "ll[i] = std::log((1.0 - p) / p);", "ll[i] = 1.0;"),
-    # Sliding windows
+    # Windows (shared by the sliding and the parallel decoders)
     Mutant("window: a committed edge does not carry its flip forward",
            "src/window.cpp",
-           "                        residual_[u] ^= 1;\n", ""),
-    Mutant("window: flips land in the committed region instead of ahead",
+           "                residual_[u] ^= 1;\n", ""),
+    Mutant("window: flips land inside the commit region instead of outside",
            "src/window.cpp",
-           "if (u != B && layer_[u] >= w.commit_end) {",
-           "if (u != B && layer_[u] < w.commit_end) {"),
+           "if (u != B && (u < w.commit_lo || u >= w.commit_hi)) flips.push_back(u);",
+           "if (u != B && u >= w.commit_lo && u < w.commit_hi) flips.push_back(u);"),
     Mutant("window: defects created by earlier commits are ignored",
            "src/window.cpp",
-           "                    local_.push_back(v - lo);\n                    merged = true;",
+           "                    local_.push_back(v - w.lo);\n                    merged = true;",
            "                    merged = true;"),
-    Mutant("window: windows do not overlap",
+    Mutant("window: sliding windows do not overlap",
            "src/window.cpp",
-           "for (int32_t s = 0; n > 0; s += commit_) {",
-           "for (int32_t s = 0; n > 0; s += commit_ + buffer_) {"),
+           "for (int32_t s = 0; s < L; s += commit_layers) {",
+           "for (int32_t s = 0; s < L; s += commit_layers + buffer_layers) {"),
     Mutant("window: edges into the future are dropped",
            "src/window.cpp",
-           "            for (int32_t e : owned) {\n",
-           "            for (int32_t e : owned) {\n"
-           "                if (high[e] != B && high[e] >= hi) continue;\n"),
-    Mutant("window: edges committed by their far end",
+           "b >= hi && future == Side::Closed) continue;",
+           "b >= hi) continue;"),
+    Mutant("window: edges leaving the commit region are never committed",
            "src/window.cpp",
-           "commit.push_back(layer_[low[e]] < w.commit_end ? 1 : 0);",
-           "commit.push_back(high[e] != B && layer_[high[e]] < w.commit_end ? 1 : 0);"),
+           "commit.push_back(committed(a) || committed(b) ? 1 : 0);",
+           "commit.push_back(committed(a) && (b == B || committed(b)) ? 1 : 0);"),
+    Mutant("parallel: core windows close their past",
+           "src/window.cpp",
+           "              WindowPlan::Side::Open, WindowPlan::Side::Open);",
+           "              WindowPlan::Side::Closed, WindowPlan::Side::Open);"),
+    Mutant("parallel: seams ignore the flips from the cores",
+           "src/window.cpp",
+           "            s.local.insert(s.local.end(), seam_flips_[k].begin(), seam_flips_[k].end());\n",
+           ""),
 ]
 
 
@@ -131,11 +138,10 @@ def run_suite(binary: Path) -> tuple[bool, str]:
     parts = []
     if mism and int(mism.group(1)):
         parts.append(f"{int(mism.group(1))} fast/reference mismatches")
-    for pattern, label in ((r"(\d+) invalid corrections", "invalid windowed corrections"),
-                           (r"(\d+) differences with whole-shot", "differences with whole-shot")):
-        found = re.search(pattern, out)
+    for prefix in ("windows", "parallel windows"):
+        found = re.search(rf"^{prefix}: \d+ random cases, (\d+) invalid corrections", out, re.M)
         if found and int(found.group(1)):
-            parts.append(f"{int(found.group(1))} {label}")
+            parts.append(f"{int(found.group(1))} invalid corrections ({prefix})")
     if not parts and fails and int(fails.group(2)):
         parts.append(f"{int(fails.group(2))} failed checks")
     if not parts and "bad_alloc" in r.stderr:

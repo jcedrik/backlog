@@ -2,8 +2,8 @@
 
 This page explains the weighted Union-Find decoder in `cpp/`: what it
 computes, how the fast version computes the same thing with far less work,
-how that equivalence is tested, and how the sliding-window decoder turns it
-into a streaming decoder.
+how that equivalence is tested, and how window decoders (sliding, then
+parallel) turn it into a streaming decoder.
 
 ## 1. The decoding problem
 
@@ -163,11 +163,13 @@ suite to fail:
 | node event fires one round early | runaway loop, stopped by a memory cap |
 | log-likelihood weights collapse to uniform | 2 failed unit checks |
 | window: a committed edge does not carry its flip forward | 25,827 invalid windowed corrections |
-| window: flips land in the committed region instead of ahead | 25,827 invalid corrections |
+| window: flips land inside the commit region instead of outside | an internal consistency check stops the run |
 | window: defects created by earlier commits are ignored | 16,365 invalid corrections |
-| window: windows do not overlap | 22,773 invalid corrections |
+| window: sliding windows do not overlap | 22,773 invalid corrections |
 | window: edges into the future are dropped | the window-top unit test (section 7) |
-| window: edges committed by their far end | 57,527 invalid corrections |
+| window: edges leaving the commit region are never committed | 58,729 invalid corrections |
+| parallel: core windows close their past | the core-past unit test (section 8) |
+| parallel: seams ignore the flips from the cores | 31,333 invalid corrections |
 
 ## 7. Sliding windows: decoding as the rounds arrive
 
@@ -217,17 +219,76 @@ limit, bursts of hard windows matter: at d = 9 and p = 0.1% one delay reached
 1.3 ms. The replay chains windows measured on independent shots, which is
 an approximation of one long experiment.
 
-## 8. Limits
+## 8. Parallel windows: more cores, no backlog
+
+One core decoding windows in order is the limit measured above. The way past
+it is to decode several windows at once (Skoric et al. 2023, Tan et al.
+2023). `ParallelWindowDecoder` cuts time into core windows and seams:
+
+```
+... seam | buffer | core: commit C | buffer | seam | buffer | core: commit C ...
+         <--- core window: both sides open --->
+```
+
+1. **Core windows** commit C rounds, with B rounds of buffer on each side.
+   Both sides are open (edges leaving the window go to the boundary), so a
+   core window depends on nothing else: all of them run in parallel.
+2. **Seams**, the G rounds between two core commit regions, run next, also in
+   parallel. Both sides are closed: the cores around them have committed, and
+   the flips of their committed edges are part of the seam's syndrome. A seam
+   commits everything it decodes.
+
+G must cover the longest edge in time (one round for Stim memory circuits),
+so a core's flips always land in a seam, never in another core: a check stops
+the run otherwise.
+
+**Same answer for any number of threads.** Each window only reads the
+original syndrome and the flips handed to it, and writes its own result, so
+the scheduling cannot change the answer. Each thread owns its scratch space
+and its own copy of every window decoder; the thread pool spins for 50 µs
+before sleeping (when every thread has a core) so back-to-back phases do not
+pay a kernel wake-up. The fuzzer checks on 75,000 random layered graphs that
+1 and 3 threads give the same correction, edge for edge, that it reproduces
+the syndrome, and that one core window covering everything is the whole-shot
+decoder; the whole suite also runs under ThreadSanitizer (`make tsan`) with
+no data race reported. A unit test pins down the open past: an error just
+below a core window must still be matched through it.
+
+**What it costs and what it buys.** With C = B = G = d, every round is
+decoded about twice, as with sliding windows, and accuracy is the same: on
+the same shots, 0.8 to 1.3% more logical errors than whole-shot decoding
+(d = 3 to 9, p = 0.5%). On this 2-core machine, 2 threads are 1.6 to 1.85
+times faster than one from d = 7 (1.4 times at d = 5, where the two phase
+barriers per shot weigh more).
+
+**How many cores for real time?** `python/parallel_benchmark.py` measures the
+work of every window, then replays a stream: rounds every microsecond, core
+windows ready once their buffer has arrived, seams once both neighbors have
+committed, N cores taking the oldest period first. The same model, applied to
+2 cores, predicts the real 2-thread time within 12% from d = 9 (it is
+optimistic: it ignores synchronization), so the core counts below keep 15%
+headroom:
+
+| d | 9 | 11 | 13 | 15 | 17 |
+|---|---|---|---|---|---|
+| p = 0.1% | 1 | 2 | 3 | 3 | 4 |
+| p = 0.3% | 4 | 6 | 8 | 11 | 15 |
+
+With fewer cores the delay grows without bound; with these, it stays under
+about a millisecond. The price is latency: the oldest round of a seam waits
+for C + B + G rounds of data before its commit can even start, about 3 d µs.
+
+## 9. Limits
 
 - Graphlike error models only: hyperedges must be decomposed, which Stim
   does with `decompose_errors=True`. When two parallel edges flip different
   observables, the likelier one is kept and the conflict is counted.
 - At most 64 logical observables (one machine word per edge).
-- Windows are decoded one after another on one core. Decoding independent
-  windows in parallel (Skoric et al. 2023, Tan et al. 2023) is the way past
-  the single-core limit, and the next milestone.
-- The sliding-window decoder needs detectors numbered in time order, which
-  holds for Stim circuits.
+- The core counts beyond 2 come from a model built on measured window times
+  and checked on 2 cores only. A machine with many cores adds memory and
+  cache contention the model does not see.
+- The window decoders need detectors numbered in time order, which holds for
+  Stim circuits.
 
 ## References
 

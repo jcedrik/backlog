@@ -4,6 +4,7 @@ __pycache__/
 
 # build outputs
 cpp/build/
+cpp/build-tsan/
 hardware/build/
 *.o
 *.cf
