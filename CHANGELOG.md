@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-05)
 
 - Browser demo (`docs/demo`, GitHub Pages): place bit flips on a surface code
   and watch the decoder grow clusters, merge them and peel out a correction,

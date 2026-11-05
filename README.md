@@ -40,7 +40,28 @@ decoder = backlog.UnionFindDecoder.from_circuit(circuit, correlated=True)
 print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
-## New in v0.5
+## New in v0.6
+
+- **A browser demo.** [Flip qubits on a surface code](https://jcedrik.github.io/backlog/demo/)
+  and step through Union-Find: growth rounds, merges, peeling, and whether
+  the correction holds. It runs the reference decoder, checked edge for edge
+  against the C++.
+- **A predecoder.** `predecode="lazy"` settles shots made only of isolated,
+  easy defects before Union-Find runs: 90% of shots at d = 5 and p = 0.1%,
+  without changing a single answer on 9,000,000 shots. `"partial"` is faster
+  at low error rates but costs accuracy at p = 0.3%.
+  [Details](#predecoder-easy-shots-without-union-find).
+- **The FPGA core scales.** A Kogge-Stone parallel prefix scan replaces the
+  ripple chains: at N = 128, Fmax on the iCE40 goes from 9.8 to 41 MHz, with
+  the same outputs bit for bit. [Details](hardware/README.md).
+- **Noise model or gates?** Stim's decomposition costs correlated decoding
+  with CX or CZ gates and with uniform or SI1000 noise; the gap is smallest
+  on the setup of arXiv:2610.26785. [Details](docs/correlated-decoding-decomposition.md#noise-model-or-gates).
+- **One command for a many-core server.** `scripts/server_scaling.sh`
+  measures the parallel decoder on 16 to 32 cores ([guide](docs/server-scaling.md)).
+
+<details>
+<summary>New in v0.5: correlated decoding, the distance loss, the decomposition finding</summary>
 
 - **Correlated Union-Find.** Two passes, as PyMatching's
   `enable_correlations`: the edges of the first correction make their
@@ -76,6 +97,8 @@ print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mea
   [contributing notes](CONTRIBUTING.md) and a [citation file](CITATION.cff).
 
 ![Correlated decoding against plain decoding, same shots; logical error per round, backlog and PyMatching](results/correlated.png)
+
+</details>
 
 ## Why "backlog"
 

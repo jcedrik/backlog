@@ -16,7 +16,7 @@ from .dem import (Correlations, GraphEdges, decompose_by_basis, dem_correlations
 from .sinter_decoder import (SinterParallelWindowDecoder, SinterSlidingWindowDecoder,
                              SinterUnionFindDecoder, sinter_decoders)
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "Correlations",

@@ -42,7 +42,28 @@ decoder = backlog.UnionFindDecoder.from_circuit(circuit, correlated=True)
 print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
-## Nouveau dans la v0.5
+## Nouveau dans la v0.6
+
+- **Une démo dans le navigateur.** [Bascule des qubits sur un code de surface](https://jcedrik.github.io/backlog/demo/)
+  et suis Union-Find pas à pas : rondes de croissance, fusions, épluchage, et
+  si la correction tient. C'est le décodeur de référence, vérifié arête par
+  arête contre le C++.
+- **Un prédécodeur.** `predecode="lazy"` règle les tirages faits seulement de
+  défauts isolés et faciles avant qu'Union-Find roule : 90 % des tirages à
+  d = 5 et p = 0,1 %, sans changer une seule réponse sur 9 000 000 de
+  tirages. `"partial"` va plus vite à bas taux d'erreur, mais coûte en
+  exactitude à p = 0,3 %.
+- **Le cœur FPGA passe à l'échelle.** Un préfixe parallèle de Kogge-Stone
+  remplace les chaînes en série : à N = 128, la Fmax sur l'iCE40 passe de
+  9,8 à 41 MHz, avec les mêmes sorties bit à bit. [Détails](hardware/README.md).
+- **Bruit ou portes ?** La décomposition de Stim coûte au décodage corrélé
+  avec des portes CX ou CZ, sous bruit uniforme ou SI1000 ; l'écart est le
+  plus petit sur le montage d'arXiv:2610.26785. [Détails (en anglais)](docs/correlated-decoding-decomposition.md#noise-model-or-gates).
+- **Une commande pour un serveur à plusieurs cœurs.** `scripts/server_scaling.sh`
+  mesure le décodeur parallèle sur 16 à 32 cœurs ([guide, en anglais](docs/server-scaling.md)).
+
+<details>
+<summary>Nouveau dans la v0.5 : décodage corrélé, perte de distance, la trouvaille sur la décomposition</summary>
 
 - **Union-Find corrélé.** Deux passes, comme `enable_correlations` de
   PyMatching : les arêtes de la première correction rendent moins chères
@@ -80,6 +101,8 @@ print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1)
   [fichier de citation](CITATION.cff).
 
 ![Décodage corrélé contre décodage simple, mêmes tirages ; erreur logique par ronde, backlog et PyMatching](results/correlated.png)
+
+</details>
 
 ## Pourquoi « backlog »
 

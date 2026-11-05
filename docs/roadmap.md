@@ -108,13 +108,19 @@ Next:
       against the C++
 - [ ] The event-driven C++ decoder in the demo through WebAssembly, with
       measurement errors over time and weights
+- [x] Write-up: correlated decoding and Stim's decomposition, with the
+      noise model and gate study
+      ([docs/correlated-decoding-decomposition.md](correlated-decoding-decomposition.md))
 - [ ] Write-up: what building a real-time decoder from scratch taught me,
       with the honest limitations
-- [ ] One upstream contribution (Stim, PyMatching or Deltakit), even small:
-      a basis-aware decomposition option for correlated matching is a
-      natural candidate
-- [ ] First PyPI release (`pip install backlog-qec`), wheels already built
-      by `.github/workflows/wheels.yml`
+- [x] Reported upstream: correlated matching on Stim's decomposition,
+      [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193)
+- [ ] Upstream contribution in progress: correlated matching in Deltakit's
+      decoders, with the X/Z decomposition and the regularized rule
+      ([Deltakit#421](https://github.com/Deltakit/deltakit/issues/421))
+- [x] PyPI releases (`pip install backlog-qec`), wheels for Linux, macOS
+      and Windows built and published by `.github/workflows/wheels.yml`
+- [ ] A DOI for every release, through Zenodo's GitHub integration
 - [x] Quickstart notebook, citation file, contributing notes
 
 ## Definition of done for the portfolio
