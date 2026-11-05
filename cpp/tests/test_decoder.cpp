@@ -204,6 +204,137 @@ void test_fuzz_fast_equals_reference(int num_graphs, int shots_per_graph) {
                 cases, mismatches);
 }
 
+// Random reweighting rules: each edge names a few partners, each with a weight
+// below the partner's own (a rule that would not lower it never fires).
+ReweightRules random_rules(std::mt19937_64& rng, const DecodingGraph& g) {
+    ReweightRules r;
+    const int32_t E = g.num_edges();
+    r.offset.assign(static_cast<std::size_t>(E) + 1, 0);
+    for (int32_t e = 0; e < E; ++e) {
+        const int k = static_cast<int>(rng() % 4);
+        for (int i = 0; i < k && E > 1; ++i) {
+            const int32_t f = static_cast<int32_t>(rng() % E);
+            if (f == e || g.weight(f) <= 1) continue;
+            r.target.push_back(f);
+            r.weight.push_back(1 + static_cast<int32_t>(rng() % (g.weight(f) - 1)));
+        }
+        r.offset[e + 1] = static_cast<int32_t>(r.target.size());
+    }
+    return r;
+}
+
+// A Y error seen as an X edge and a Z edge. Plain decoding explains the Z
+// side through the boundary (weight 4 + 4 < 9); once the first pass has used
+// the X edge, the rule makes the partner edge cheap and the second pass takes it.
+void test_correlated_decision() {
+    // Detectors 0, 1 (X side), 2, 3 (Z side); node 4 is the boundary.
+    std::vector<Edge> edges{edge(0, 1), edge(2, 3, 0), edge(2, 4, 1), edge(3, 4, 0)};
+    DecodingGraph g(4, 1, edges, std::vector<int32_t>{3, 9, 4, 4});
+    ReweightRules rules;
+    rules.offset = {0, 1, 1, 1, 1};
+    rules.target = {1};
+    rules.weight = {1};
+    UnionFindDecoder plain(g);
+    UnionFindDecoder corr(g, rules);
+    CHECK(!plain.correlated());
+    CHECK(corr.correlated());
+    const std::vector<int32_t> fired{0, 1, 2, 3};
+    const DecodeResult rp = plain.decode_detailed(fired);
+    CHECK(rp.observables == 1);
+    CHECK(rp.syndrome_ok);
+    const DecodeResult rc = corr.decode_detailed(fired);
+    CHECK(rc.observables == 0);
+    CHECK(rc.syndrome_ok);
+    CHECK(std::find(rc.correction.begin(), rc.correction.end(), 1) != rc.correction.end());
+    CHECK(corr.last_first_pass() == rp.correction);
+    // The X side alone fires the rule but leaves nothing to explain with it.
+    CHECK(corr.decode(std::vector<int32_t>{0, 1}) == 0);
+    // Weights are restored: the Z side alone decodes as plain again.
+    CHECK(corr.decode(std::vector<int32_t>{2, 3}) == plain.decode(std::vector<int32_t>{2, 3}));
+    CHECK(corr.stats().reweighted_edges >= 1);
+}
+
+void test_reweight_rules_from_probabilities() {
+    std::vector<Edge> edges{edge(0, 1, 0, 0.001), edge(1, 2, 0, 0.01), edge(2, 3, 0, 0.1)};
+    DecodingGraph g(3, 1, edges, Weighting::LogLikelihood, 1000);
+    CHECK(g.log_likelihood_weighted());
+    CHECK(g.weight_for_probability(0.001) == g.weight(0));
+    CHECK(g.weight_for_probability(0.1) == g.weight(2));
+    CHECK(g.weight_for_probability(0.5) == 1);
+    // Edge 0 implies edge 1 with probability 0.3, edge 2 with 0.05 (no use:
+    // edge 2 is already at p = 0.1).
+    const std::vector<int32_t> offset{0, 2, 2, 2};
+    const std::vector<int32_t> target{1, 2};
+    const std::vector<double> conditional{0.3, 0.05};
+    const ReweightRules a1 = make_reweight_rules(g, offset, target, conditional, 1.0);
+    CHECK(a1.target == std::vector<int32_t>{1});
+    CHECK(a1.weight == std::vector<int32_t>{g.weight_for_probability(0.3)});
+    const ReweightRules a5 = make_reweight_rules(g, offset, target, conditional, 0.1);
+    CHECK(a5.target == std::vector<int32_t>{1});
+    CHECK(a5.weight[0] == g.weight_for_probability(0.03));
+    CHECK(a5.weight[0] > a1.weight[0]);  // regularized: a smaller discount
+    // A tiny alpha lowers nothing: plain decoding.
+    CHECK(make_reweight_rules(g, offset, target, conditional, 1e-6).empty());
+    const std::vector<int32_t> w = reweighted_weights(g, a1, {0});
+    CHECK(w[1] == a1.weight[0]);
+    CHECK(w[0] == g.weight(0) && w[2] == g.weight(2));
+    bool threw = false;
+    try {
+        DecodingGraph u(3, 1, edges, Weighting::Uniform);
+        (void)make_reweight_rules(u, offset, target, conditional, 1.0);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    CHECK(threw);  // no probability scale on a uniform graph
+}
+
+// Correlated decoding is exactly a plain first pass, then the decoder on the
+// reweighted graph. Checked against the reference decoder on that graph, edge
+// for edge, with one decoder object reused across all shots, so weights and
+// adjacency order must come back after every shot.
+void test_correlated_fuzz(int num_graphs, int shots_per_graph) {
+    std::mt19937_64 rng(20261107);
+    long long cases = 0, reweighted = 0, mismatches = 0;
+    for (int gi = 0; gi < num_graphs; ++gi) {
+        DecodingGraph g = random_graph(rng, /*uniform=*/false, /*parallel=*/gi % 4 == 1);
+        ReweightRules rules = random_rules(rng, g);
+        UnionFindDecoder plain(g);
+        UnionFindDecoder corr(g, rules);
+        std::uniform_real_distribution<double> unit(0.0, 1.0);
+        const double q = 0.02 + 0.3 * unit(rng);
+        for (int s = 0; s < shots_per_graph; ++s) {
+            std::vector<uint8_t> flip(g.num_nodes(), 0);
+            for (const Edge& e : g.edges()) {
+                if (unit(rng) < q) {
+                    flip[e.a] ^= 1;
+                    flip[e.b] ^= 1;
+                }
+            }
+            std::vector<int32_t> fired;
+            for (int32_t v = 0; v < g.num_detectors(); ++v) {
+                if (flip[v]) fired.push_back(v);
+            }
+            std::shuffle(fired.begin(), fired.end(), rng);
+            ++cases;
+            const DecodeResult rp = plain.decode_detailed(fired);
+            const DecodeResult rc = corr.decode_detailed(fired);
+            const std::vector<int32_t> w2 = reweighted_weights(g, rules, rp.correction);
+            if (w2 != g.weights()) ++reweighted;
+            ReferenceDecoder ref(DecodingGraph(g.num_detectors(), g.num_observables(), g.edges(), w2));
+            const DecodeResult rr = ref.decode_detailed(fired);
+            const bool same = rc.observables == rr.observables && rc.correction == rr.correction &&
+                              (rules.empty() || corr.last_first_pass() == rp.correction);
+            if (!same) ++mismatches;
+            CHECK(same);
+            CHECK(rc.syndrome_ok);
+            CHECK(corr.decode(fired) == rc.observables);
+        }
+    }
+    std::printf("correlated fuzz: %lld random cases (%lld reweighted), %lld mismatches with the "
+                "reference on the reweighted graph\n", cases, reweighted, mismatches);
+    CHECK(reweighted > cases / 4);
+}
+
 // Random layered graph: each layer is a tree hooked to the boundary, every
 // detector reaches the next layer, and some edges skip a layer. Every window
 // of whole layers can explain any syndrome, so the invariant must always hold.
@@ -505,6 +636,9 @@ int main() {
     test_unexplainable_syndrome();
     test_batch_matches_single_shots();
     test_fuzz_fast_equals_reference(3000, 25);
+    test_correlated_decision();
+    test_reweight_rules_from_probabilities();
+    test_correlated_fuzz(3000, 25);
     test_window_matches_across_the_window_top();
     test_window_shapes_are_shared();
     test_window_fuzz(3000, 25);

@@ -28,8 +28,11 @@ struct Edge {
 
 enum class Weighting { Uniform, LogLikelihood };
 
+// `max_ll`, if given, receives the largest ln((1-p)/p), which maps to weight
+// `resolution` (0 for Uniform weighting).
 std::vector<int32_t> compute_weights(const std::vector<Edge>& edges,
-                                     Weighting weighting, int32_t resolution);
+                                     Weighting weighting, int32_t resolution,
+                                     double* max_ll = nullptr);
 
 class DecodingGraph {
 public:
@@ -57,6 +60,12 @@ public:
     int32_t weight(int32_t e) const { return weights_[e]; }
     const std::vector<int32_t>& weights() const { return weights_; }
 
+    // The weight this graph's log-likelihood weighting gives a probability p,
+    // on the same scale as its edges (at least 1). Throws if the graph was not
+    // built with Weighting::LogLikelihood.
+    int32_t weight_for_probability(double p) const;
+    bool log_likelihood_weighted() const { return max_ll_ > 0.0; }
+
     // Incident edges of node v, as a contiguous range (CSR layout).
     const int32_t* adj_begin(int32_t v) const { return adj_.data() + offset_[v]; }
     const int32_t* adj_end(int32_t v) const { return adj_.data() + offset_[v + 1]; }
@@ -68,6 +77,8 @@ private:
     int32_t m_;
     std::vector<Edge> edges_;
     std::vector<int32_t> weights_;
+    int32_t resolution_ = 0;
+    double max_ll_ = 0.0;   // ln((1-p)/p) that maps to `resolution_`; 0 if not log-likelihood
     std::vector<int32_t> offset_;
     std::vector<int32_t> adj_;
 };

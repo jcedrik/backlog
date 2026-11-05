@@ -10,7 +10,9 @@
 namespace backlog {
 
 std::vector<int32_t> compute_weights(const std::vector<Edge>& edges,
-                                     Weighting weighting, int32_t resolution) {
+                                     Weighting weighting, int32_t resolution,
+                                     double* max_ll_out) {
+    if (max_ll_out) *max_ll_out = 0.0;
     std::vector<int32_t> w(edges.size(), 2);
     if (weighting == Weighting::Uniform || edges.empty()) return w;
     if (resolution < 2) throw std::invalid_argument("resolution must be >= 2");
@@ -28,6 +30,7 @@ std::vector<int32_t> compute_weights(const std::vector<Edge>& edges,
         max_ll = std::max(max_ll, ll[i]);
     }
     if (max_ll <= 0.0) return w;  // every edge at p = 0.5: nothing to weigh
+    if (max_ll_out) *max_ll_out = max_ll;
     for (std::size_t i = 0; i < edges.size(); ++i) {
         const double scaled = static_cast<double>(resolution) * ll[i] / max_ll;
         w[i] = std::max<int32_t>(1, static_cast<int32_t>(std::lround(scaled)));
@@ -39,8 +42,19 @@ DecodingGraph::DecodingGraph(int32_t num_detectors, int32_t num_observables,
                              std::vector<Edge> edges, Weighting weighting,
                              int32_t resolution)
     : n_(num_detectors), m_(num_observables), edges_(std::move(edges)) {
-    weights_ = compute_weights(edges_, weighting, resolution);
+    weights_ = compute_weights(edges_, weighting, resolution, &max_ll_);
+    resolution_ = resolution;
     validate_and_index();
+}
+
+int32_t DecodingGraph::weight_for_probability(double p) const {
+    if (max_ll_ <= 0.0) {
+        throw std::logic_error("graph has no log-likelihood weighting to convert probabilities");
+    }
+    if (!(p > 0.0 && p <= 1.0)) throw std::invalid_argument("probability must be in (0, 1]");
+    p = std::min(std::max(p, 1e-15), 0.5);  // as compute_weights does
+    const double scaled = static_cast<double>(resolution_) * std::log((1.0 - p) / p) / max_ll_;
+    return std::max<int32_t>(1, static_cast<int32_t>(std::lround(scaled)));
 }
 
 DecodingGraph::DecodingGraph(int32_t num_detectors, int32_t num_observables,

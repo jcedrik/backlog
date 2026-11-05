@@ -28,6 +28,14 @@
 //   2. Peeling: a spanning forest of the fully grown edges is built in
 //      (weight, edge id) order, so likelier edges are preferred, then peeled
 //      from the leaves toward the boundary (Delfosse-Zemor).
+//
+// Correlated decoding (two passes, as PyMatching's enable_correlations): a
+// decomposed error such as Y = X.Z appears in the graph as separate edges. A
+// first pass decodes as usual; every edge of its correction then makes the
+// edges it comes with cheaper, and a second pass decodes with those weights.
+// Rule (e -> f, w) lowers f's weight to w when that is lower. The weights are
+// restored after the shot, and the touched adjacency is re-sorted both ways,
+// so the second pass is exactly the decoder run on the reweighted graph.
 #pragma once
 
 #include <cstddef>
@@ -53,7 +61,39 @@ struct DecoderStats {
     uint64_t full_edges = 0;         // edges fully grown
     uint64_t edge_reschedules = 0;   // growth-rate updates of single edges
     uint64_t events_popped = 0;      // queue pops, stale ones included
+    uint64_t reweighted_edges = 0;   // weights lowered for second passes
 };
+
+// Reweighting rules for correlated decoding, a CSR table over edges: rules
+// [offset[e], offset[e+1]) of edge e lower edge target[k] to weight[k] (>= 1).
+struct ReweightRules {
+    std::vector<int32_t> offset;
+    std::vector<int32_t> target;
+    std::vector<int32_t> weight;
+    bool empty() const { return target.empty(); }
+};
+
+// Rules from conditional probabilities: conditional[k] = P(target[k] fired |
+// edge e fired) for k in [offset[e], offset[e+1]). The new probability is
+// min(0.5, alpha * P), turned into a weight on the graph's own scale. alpha = 1
+// is standard correlated decoding. A smaller alpha is the regularized rule of
+// Hernando de la Fuente et al. (arXiv:2610.26785): it charges every discounted
+// edge ln(1/alpha) more, the cost of the extra independent fault a joint
+// discount otherwise takes for granted. Rules that would not lower the weight
+// of their target are dropped.
+ReweightRules make_reweight_rules(const DecodingGraph& graph,
+                                  const std::vector<int32_t>& offset,
+                                  const std::vector<int32_t>& target,
+                                  const std::vector<double>& conditional,
+                                  double alpha);
+
+// Checks the table's shape against the graph; throws std::invalid_argument.
+void validate_reweight_rules(const DecodingGraph& graph, const ReweightRules& rules);
+
+// The weights a second pass uses after a first pass that chose `first`.
+std::vector<int32_t> reweighted_weights(const DecodingGraph& graph,
+                                        const ReweightRules& rules,
+                                        const std::vector<int32_t>& first);
 
 // True iff flipping every edge in `correction` produces exactly `fired`.
 bool correction_explains(const DecodingGraph& graph,
@@ -67,8 +107,17 @@ void unpack_shot(const uint8_t* bytes, std::size_t num_bytes,
 class UnionFindDecoder {
 public:
     explicit UnionFindDecoder(DecodingGraph graph);
+    UnionFindDecoder(DecodingGraph graph, ReweightRules rules);
 
     const DecodingGraph& graph() const { return g_; }
+
+    // Correlated (two-pass) decoding is on iff the rules are not empty. It
+    // applies to every decode call below.
+    void set_reweight_rules(ReweightRules rules);
+    const ReweightRules& reweight_rules() const { return rules_; }
+    bool correlated() const { return !rules_.empty(); }
+    // Correction of the last shot's first pass (correlated decoding only).
+    const std::vector<int32_t>& last_first_pass() const { return first_; }
 
     // fired: detector ids, any order; a detector listed twice cancels out.
     uint64_t decode(const int32_t* fired, std::size_t count);
@@ -79,7 +128,7 @@ public:
     uint64_t decode(const int32_t* fired, std::size_t count,
                     std::vector<int32_t>& correction) {
         correction.clear();
-        return run(fired, count, &correction);
+        return solve(fired, count, &correction);
     }
     DecodeResult decode_detailed(const std::vector<int32_t>& fired);
 
@@ -99,8 +148,15 @@ public:
     void reset_stats() { stats_ = DecoderStats{}; }
 
 private:
+    // One shot: one pass, or two when correlated.
+    uint64_t solve(const int32_t* fired, std::size_t count,
+                   std::vector<int32_t>* correction);
+    // One pass of Union-Find with the current weights.
     uint64_t run(const int32_t* fired, std::size_t count,
                  std::vector<int32_t>* correction);
+    void apply_rules();
+    void undo_rules();
+    void sort_adjacency(int32_t v);
     void grow();
     uint64_t peel(std::vector<int32_t>* correction);
 
@@ -238,6 +294,13 @@ private:
     std::vector<int32_t> leaves_;
     int32_t steps_ = 0;
     DecoderStats stats_;
+
+    ReweightRules rules_;
+    std::vector<int32_t> first_;                         // first-pass correction
+    std::vector<std::pair<int32_t, int32_t>> lowered_;   // (edge, previous weight)
+    std::vector<int32_t> resort_;                        // nodes whose adjacency moved
+    std::vector<uint8_t> resort_mark_;
+    std::vector<AdjEntry> saved_adj_;                    // their lists before the move
 };
 
 class ReferenceDecoder {

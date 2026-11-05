@@ -128,6 +128,82 @@ int64_t UnionFindDecoder::BucketQueue::pop_round(std::vector<Event>& out) {
 }
 
 // ---------------------------------------------------------------------------
+// Reweighting rules for correlated decoding
+// ---------------------------------------------------------------------------
+
+void validate_reweight_rules(const DecodingGraph& graph, const ReweightRules& rules) {
+    const int32_t E = graph.num_edges();
+    if (rules.offset.size() != static_cast<std::size_t>(E) + 1) {
+        throw std::invalid_argument("reweight rules need one offset per edge, plus one");
+    }
+    if (rules.offset.front() != 0 ||
+        rules.offset.back() != static_cast<int32_t>(rules.target.size()) ||
+        rules.target.size() != rules.weight.size()) {
+        throw std::invalid_argument("reweight rule table is inconsistent");
+    }
+    for (int32_t e = 0; e < E; ++e) {
+        if (rules.offset[e] > rules.offset[e + 1]) {
+            throw std::invalid_argument("reweight rule offsets must be non-decreasing");
+        }
+    }
+    for (std::size_t k = 0; k < rules.target.size(); ++k) {
+        if (rules.target[k] < 0 || rules.target[k] >= E) {
+            throw std::invalid_argument("reweight rule target out of range");
+        }
+        if (rules.weight[k] < 1) throw std::invalid_argument("reweight rule weights must be >= 1");
+    }
+}
+
+ReweightRules make_reweight_rules(const DecodingGraph& graph,
+                                  const std::vector<int32_t>& offset,
+                                  const std::vector<int32_t>& target,
+                                  const std::vector<double>& conditional,
+                                  double alpha) {
+    const int32_t E = graph.num_edges();
+    if (!(alpha > 0.0)) throw std::invalid_argument("alpha must be > 0");
+    if (offset.size() != static_cast<std::size_t>(E) + 1 || offset.front() != 0 ||
+        offset.back() != static_cast<int32_t>(target.size()) ||
+        target.size() != conditional.size()) {
+        throw std::invalid_argument("correlation table is inconsistent");
+    }
+    ReweightRules r;
+    r.offset.assign(static_cast<std::size_t>(E) + 1, 0);
+    for (int32_t e = 0; e < E; ++e) {
+        if (offset[e] > offset[e + 1]) throw std::invalid_argument("offsets must be non-decreasing");
+        for (int32_t k = offset[e]; k < offset[e + 1]; ++k) {
+            const int32_t f = target[k];
+            if (f < 0 || f >= E) throw std::invalid_argument("correlation target out of range");
+            const double q = conditional[k];
+            if (!(q >= 0.0 && q <= 1.0)) {
+                throw std::invalid_argument("conditional probabilities must be in [0, 1]");
+            }
+            if (f == e || q <= 0.0) continue;
+            const int32_t w = graph.weight_for_probability(std::min(0.5, alpha * q));
+            if (w >= graph.weight(f)) continue;  // would never lower it
+            r.target.push_back(f);
+            r.weight.push_back(w);
+        }
+        r.offset[e + 1] = static_cast<int32_t>(r.target.size());
+    }
+    return r;
+}
+
+std::vector<int32_t> reweighted_weights(const DecodingGraph& graph,
+                                        const ReweightRules& rules,
+                                        const std::vector<int32_t>& first) {
+    std::vector<int32_t> w = graph.weights();
+    if (rules.empty()) return w;
+    validate_reweight_rules(graph, rules);
+    for (int32_t e : first) {
+        if (e < 0 || e >= graph.num_edges()) throw std::out_of_range("edge id out of range");
+        for (int32_t k = rules.offset[e]; k < rules.offset[e + 1]; ++k) {
+            w[rules.target[k]] = std::min(w[rules.target[k]], rules.weight[k]);
+        }
+    }
+    return w;
+}
+
+// ---------------------------------------------------------------------------
 // UnionFindDecoder: setup and lazy state
 // ---------------------------------------------------------------------------
 
@@ -155,15 +231,11 @@ UnionFindDecoder::UnionFindDecoder(DecodingGraph graph)
     }
     sadj_.resize(static_cast<std::size_t>(sadj_offset_[V]));
     for (int32_t v = 0; v < V; ++v) {
-        AdjEntry* out = sadj_.data() + sadj_offset_[v];
-        AdjEntry* o = out;
+        AdjEntry* o = sadj_.data() + sadj_offset_[v];
         for (const int32_t* it = g_.adj_begin(v); it != g_.adj_end(v); ++it, ++o) {
             *o = AdjEntry{*it, topo_[*it].a == v ? topo_[*it].b : topo_[*it].a};
         }
-        std::sort(out, o, [this](const AdjEntry& x, const AdjEntry& y) {
-            const int32_t wx = topo_[x.edge].weight, wy = topo_[y.edge].weight;
-            return wx != wy ? wx < wy : x.edge < y.edge;
-        });
+        sort_adjacency(v);
     }
     nodes_.assign(static_cast<std::size_t>(V), NodeState{});
     edges_.assign(static_cast<std::size_t>(E), EdgeState{});
@@ -171,6 +243,26 @@ UnionFindDecoder::UnionFindDecoder(DecodingGraph graph)
     sedges_.assign(static_cast<std::size_t>(V), {});
     fadj_.assign(static_cast<std::size_t>(V), {});
     queue_.reset(max_weight);
+}
+
+UnionFindDecoder::UnionFindDecoder(DecodingGraph graph, ReweightRules rules)
+    : UnionFindDecoder(std::move(graph)) {
+    set_reweight_rules(std::move(rules));
+}
+
+void UnionFindDecoder::sort_adjacency(int32_t v) {
+    AdjEntry* begin = sadj_.data() + sadj_offset_[v];
+    AdjEntry* end = sadj_.data() + sadj_offset_[v + 1];
+    std::sort(begin, end, [this](const AdjEntry& x, const AdjEntry& y) {
+        const int32_t wx = topo_[x.edge].weight, wy = topo_[y.edge].weight;
+        return wx != wy ? wx < wy : x.edge < y.edge;
+    });
+}
+
+void UnionFindDecoder::set_reweight_rules(ReweightRules rules) {
+    if (!rules.empty()) validate_reweight_rules(g_, rules);
+    rules_ = std::move(rules);
+    resort_mark_.assign(rules_.empty() ? 0 : static_cast<std::size_t>(g_.num_nodes()), 0);
 }
 
 void UnionFindDecoder::next_epoch() {
@@ -426,14 +518,83 @@ void UnionFindDecoder::pop_node_event(int32_t v, int64_t now) {
 // ---------------------------------------------------------------------------
 
 uint64_t UnionFindDecoder::decode(const int32_t* fired, std::size_t count) {
-    return run(fired, count, nullptr);
+    return solve(fired, count, nullptr);
 }
 
 DecodeResult UnionFindDecoder::decode_detailed(const std::vector<int32_t>& fired) {
     DecodeResult r;
-    r.observables = run(fired.data(), fired.size(), &r.correction);
+    r.observables = solve(fired.data(), fired.size(), &r.correction);
     r.syndrome_ok = correction_explains(g_, fired, r.correction);
     return r;
+}
+
+uint64_t UnionFindDecoder::solve(const int32_t* fired, std::size_t count,
+                                 std::vector<int32_t>* correction) {
+    if (rules_.empty()) return run(fired, count, correction);
+    first_.clear();
+    run(fired, count, &first_);
+    apply_rules();
+    const uint64_t obs = run(fired, count, correction);
+    undo_rules();
+    return obs;
+}
+
+// Every edge of the first pass lowers the weights its rules name. Only node
+// adjacency order depends on weights (the boundary never grows, so its order
+// is never read). A lowered edge only moves left in its endpoints' sorted
+// adjacency, so one insertion step per change keeps every list sorted by
+// (weight, id): the second pass sees exactly the reweighted graph. Each
+// touched list is saved first and copied back afterwards.
+void UnionFindDecoder::apply_rules() {
+    const int32_t* off = rules_.offset.data();
+    for (int32_t e : first_) {
+        for (int32_t k = off[e]; k < off[e + 1]; ++k) {
+            const int32_t f = rules_.target[k];
+            const int32_t w = rules_.weight[k];
+            EdgeTopo& t = topo_[f];
+            if (w >= t.weight) continue;
+            lowered_.emplace_back(f, t.weight);
+            t.weight = w;
+            for (int32_t v : {t.a, t.b}) {
+                if (v == boundary_) continue;
+                AdjEntry* begin = sadj_.data() + sadj_offset_[v];
+                AdjEntry* end = sadj_.data() + sadj_offset_[v + 1];
+                if (!resort_mark_[v]) {
+                    resort_mark_[v] = 1;
+                    resort_.push_back(v);
+                    saved_adj_.insert(saved_adj_.end(), begin, end);
+                }
+                AdjEntry* it = begin;
+                while (it->edge != f) ++it;
+                const AdjEntry moved = *it;
+                for (; it != begin; --it) {
+                    const AdjEntry& prev = *(it - 1);
+                    const int32_t wp = topo_[prev.edge].weight;
+                    if (wp < w || (wp == w && prev.edge < f)) break;
+                    *it = prev;
+                }
+                *it = moved;
+            }
+        }
+    }
+    stats_.reweighted_edges += lowered_.size();
+}
+
+void UnionFindDecoder::undo_rules() {
+    // Backwards: an edge lowered twice gets its original weight back last.
+    for (auto it = lowered_.rbegin(); it != lowered_.rend(); ++it) {
+        topo_[it->first].weight = it->second;
+    }
+    lowered_.clear();
+    const AdjEntry* saved = saved_adj_.data();
+    for (int32_t v : resort_) {
+        const int32_t len = sadj_offset_[v + 1] - sadj_offset_[v];
+        std::copy(saved, saved + len, sadj_.data() + sadj_offset_[v]);
+        saved += len;
+        resort_mark_[v] = 0;
+    }
+    resort_.clear();
+    saved_adj_.clear();
 }
 
 uint64_t UnionFindDecoder::run(const int32_t* fired, std::size_t count,
