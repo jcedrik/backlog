@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `scripts/server_scaling.sh`: one command that builds backlog on a fresh
+  Ubuntu machine, runs `make scaling` and packs the results, with a guide to
+  measuring on 16 to 32 physical cores (`docs/server-scaling.md`).
 - Predecoder in front of Union-Find: `predecode="lazy"` settles a shot whose
   defects are all isolated pairs or lone defects next to the boundary, as
   Delfosse's lazy decoder, and `predecode="partial"` settles the isolated

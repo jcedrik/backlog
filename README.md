@@ -437,7 +437,8 @@ docs/          how the decoder works, related work, roadmap
 - **Scaling measured on a laptop only.** On a 4-core, 15 W laptop the speedup
   tops out around 2x at 4 threads, mostly because each core slows down when
   the others are busy; the core counts above are lower bounds until
-  `make scaling` runs on a server with pinned cores. The stream replays chain
+  `make scaling` runs on a server with pinned cores ([one command, about half
+  an hour](docs/server-scaling.md)). The stream replays chain
   windows measured on independent shots, an approximation of one long
   experiment.
 - **One noise model.** Every number here is for uniform circuit-level noise;

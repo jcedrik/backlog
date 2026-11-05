@@ -474,7 +474,7 @@ dense clusters that a local rule has to leave alone.
   laptop it predicted about 3x at 4 threads where 2x was measured, and over
   4x at 8 threads where hyperthreads made decoding slower. Its core counts
   are lower bounds until `make scaling` is rerun on a machine with more
-  physical cores.
+  physical cores ([docs/server-scaling.md](server-scaling.md)).
 - The window decoders need detectors numbered in time order, which holds for
   Stim circuits.
 

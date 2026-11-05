@@ -71,7 +71,9 @@ Next:
       runs 1.6 to 1.7 times slower than alone (work inflation, flat in the
       window size, so the clock rather than the caches) and threads are busy
       67 to 84% of the time; sharing window graphs between threads dropped
-- [ ] Measure on a server with pinned physical cores (threads = cores)
+- [ ] Measure on a server with pinned physical cores (threads = cores):
+      `scripts/server_scaling.sh` does it in one command
+      ([docs/server-scaling.md](server-scaling.md))
 - [ ] Streaming scheduler that takes windows as their rounds arrive, without
       the end-of-shot tail that leaves threads idle
 - [ ] Correlated decoding at d = 7 and 9: enumerate triples of faults (local

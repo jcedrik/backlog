@@ -463,7 +463,8 @@ docs/          fonctionnement du décodeur, état de l'art, feuille de route (en
   à 4 cœurs et 15 W, l'accélération plafonne vers 2x à 4 threads, surtout
   parce que chaque cœur ralentit quand les autres travaillent ; les nombres
   de cœurs ci-dessus restent des bornes inférieures tant que `make scaling`
-  n'a pas roulé sur un serveur avec des cœurs dédiés. Le flux rejoue des
+  n'a pas roulé sur un serveur avec des cœurs dédiés ([une commande, environ
+  une demi-heure](docs/server-scaling.md)). Le flux rejoue des
   fenêtres mesurées sur des tirages indépendants, une approximation d'une
   seule longue expérience.
 - **Un seul modèle de bruit.** Tous les chiffres ici sont pour un bruit
