@@ -43,6 +43,7 @@
 #pragma once
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -185,7 +186,12 @@ private:
     std::vector<int32_t> seams_;   // window indices of the seams
     std::vector<Scratch> scratch_;  // one per thread
     std::vector<Result> results_;   // one per window
-    std::vector<std::vector<int32_t>> seam_flips_;  // flips received, per seam
+    // Per seam (window index): flips from the core before and after it. Each
+    // has exactly one writer, the core on that side.
+    std::vector<std::vector<int32_t>> from_before_;
+    std::vector<std::vector<int32_t>> from_after_;
+    std::unique_ptr<std::atomic<int32_t>[]> pending_;  // per seam: cores still running
+    std::atomic<bool> misrouted_{false};
     std::vector<int32_t> sorted_;
 };
 

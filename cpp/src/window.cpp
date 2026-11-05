@@ -5,12 +5,25 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
+
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <intrin.h>
+#elif defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
 
 namespace backlog {
 namespace detail {
@@ -257,14 +270,53 @@ void check_ids(const std::vector<int32_t>& v, int32_t n) {
 // back-to-back phases do not pay a kernel wake-up each time (the usual
 // spin-then-block policy of OpenMP runtimes).
 
+// Tells the core a spin loop is waiting: on x86, PAUSE stops the loop from
+// flooding the pipeline and leaves a hyperthread sibling its share.
+inline void cpu_relax() {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    _mm_pause();
+#elif defined(__x86_64__) || defined(__i386__)
+    _mm_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ __volatile__("yield");
+#endif
+}
+
+// Physical cores, not hardware threads: two hyperthreads of one core share
+// its execution units, so a thread spinning on one slows the other down.
+unsigned physical_cores() {
+    const unsigned logical = std::thread::hardware_concurrency();
+#if defined(__linux__)
+    std::set<std::pair<long, long>> cores;
+    for (unsigned c = 0; c < 2 * logical + 64; ++c) {
+        const std::string dir = "/sys/devices/system/cpu/cpu" + std::to_string(c) + "/topology/";
+        std::ifstream core(dir + "core_id");
+        long core_id = -1, package = 0;
+        if (!(core >> core_id)) continue;
+        std::ifstream pkg(dir + "physical_package_id");
+        if (!(pkg >> package)) package = 0;
+        cores.emplace(package, core_id);
+    }
+    if (!cores.empty() && cores.size() <= logical) return static_cast<unsigned>(cores.size());
+#elif defined(__APPLE__)
+    int n = 0;
+    size_t len = sizeof(n);
+    if (sysctlbyname("hw.physicalcpu", &n, &len, nullptr, 0) == 0 && n > 0) {
+        return static_cast<unsigned>(n);
+    }
+#endif
+    return logical;
+}
+
 class ThreadPool {
 public:
     explicit ThreadPool(int32_t threads) {
-        // Spinning only pays when every thread has a core of its own.
-        const unsigned cores = std::thread::hardware_concurrency();
+        // Spinning only pays when every thread has a physical core of its own.
+        const unsigned cores = physical_cores();
         spin_ = cores == 0 || static_cast<unsigned>(threads) <= cores;
         for (int32_t t = 1; t < threads; ++t) workers_.emplace_back([this, t] { loop(t); });
     }
+    bool spins() const { return spin_; }
     ~ThreadPool() {
         stop_.store(true, std::memory_order_relaxed);
         generation_.fetch_add(1, std::memory_order_release);
@@ -296,6 +348,14 @@ public:
             done_.wait(lock, [this] { return busy_.load(std::memory_order_acquire) == 0; });
         }
         job_ = nullptr;
+        // A task that threw on a worker would otherwise end the process: the
+        // first exception is carried back to the caller instead.
+        std::exception_ptr error;
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            error.swap(error_);
+        }
+        if (error) std::rethrow_exception(error);
     }
 
 private:
@@ -306,11 +366,17 @@ private:
         for (uint32_t i = 0;; ++i) {
             if (ready()) return true;
             if ((i & 63) == 0 && std::chrono::steady_clock::now() > limit) return false;
+            cpu_relax();
         }
     }
     void work(int32_t thread) {
         for (int32_t i = next_.fetch_add(1); i < count_; i = next_.fetch_add(1)) {
-            (*job_)(i, thread);
+            try {
+                (*job_)(i, thread);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(m_);
+                if (!error_) error_ = std::current_exception();
+            }
         }
     }
     void loop(int32_t thread) {
@@ -338,6 +404,7 @@ private:
     std::mutex m_;
     std::condition_variable wake_, done_;
     int32_t sleepers_ = 0;  // guarded by m_
+    std::exception_ptr error_;  // guarded by m_: first exception of the current run
     const std::function<void(int32_t, int32_t)>* job_ = nullptr;
     int32_t count_ = 0;
     std::atomic<int32_t> next_{0};
@@ -568,6 +635,11 @@ ParallelWindowDecoder::ParallelWindowDecoder(DecodingGraph graph, std::vector<in
     }
     p.finish();
     for (int32_t k = 0; k < static_cast<int32_t>(p.windows.size()); ++k) {
+        // The layout alternates core, seam, core, ...: every seam's neighbours
+        // are cores, which the scheduling below relies on.
+        if ((p.windows[k].kind == Window::Core) != (k % 2 == 0)) {
+            throw std::logic_error("parallel windows must alternate core and seam");
+        }
         (p.windows[k].kind == Window::Core ? cores_ : seams_).push_back(k);
     }
     pool_ = std::make_unique<detail::ThreadPool>(threads);
@@ -579,7 +651,9 @@ ParallelWindowDecoder::ParallelWindowDecoder(DecodingGraph graph, std::vector<in
     }
     scratch_.resize(static_cast<std::size_t>(threads));
     results_.resize(p.windows.size());
-    seam_flips_.resize(p.windows.size());
+    from_before_.resize(p.windows.size());
+    from_after_.resize(p.windows.size());
+    pending_ = std::make_unique<std::atomic<int32_t>[]>(p.windows.size());
 }
 
 ParallelWindowDecoder::~ParallelWindowDecoder() = default;
@@ -601,13 +675,44 @@ uint64_t ParallelWindowDecoder::run(const int32_t* fired, std::size_t count,
                                     std::vector<int32_t>* correction, double* window_ns) {
     const WindowPlan& p = *plan_;
     const bool detailed = correction != nullptr;
+    const int32_t num_windows = static_cast<int32_t>(p.windows.size());
     auto in_range = [fired, count](int32_t lo, int32_t hi) {
         const int32_t* b = std::lower_bound(fired, fired + count, lo);
         const int32_t* e = std::lower_bound(b, fired + count, hi);
         return std::make_pair(b, e);
     };
 
-    // 1. Core windows, independent of each other.
+    // A seam runs as soon as the cores on both sides of it have committed, on
+    // the thread that finished the second of them, with their flips still in
+    // its cache: there is no barrier between cores and seams.
+    for (int32_t k : seams_) {
+        pending_[k].store(k + 1 < num_windows ? 2 : 1, std::memory_order_relaxed);
+    }
+    misrouted_.store(false, std::memory_order_relaxed);
+
+    auto run_seam = [&](int32_t k, int32_t t) {
+        const Window& w = p.windows[k];
+        const Clock::time_point t0 = window_ns ? Clock::now() : Clock::time_point{};
+        Result& r = results_[k];
+        r.obs = 0;
+        r.flips.clear();
+        r.correction.clear();
+        if (w.shape >= 0) {
+            Scratch& s = scratch_[t];
+            const auto range = in_range(w.lo, w.hi);
+            s.local.assign(range.first, range.second);
+            s.local.insert(s.local.end(), from_before_[k].begin(), from_before_[k].end());
+            s.local.insert(s.local.end(), from_after_[k].begin(), from_after_[k].end());
+            detail::canonicalize(s.local);
+            for (int32_t& v : s.local) v -= w.lo;
+            s.no_flips.clear();
+            r.obs = detail::solve_window(p, w, *decoders_[t][w.shape], s.local,
+                                         s.local_correction, s.no_flips,
+                                         detailed ? &r.correction : nullptr);
+        }
+        if (window_ns) window_ns[k] = elapsed_ns(t0);
+    };
+
     pool_->run(static_cast<int32_t>(cores_.size()), [&](int32_t i, int32_t t) {
         const int32_t k = cores_[i];
         const Window& w = p.windows[k];
@@ -625,45 +730,32 @@ uint64_t ParallelWindowDecoder::run(const int32_t* fired, std::size_t count,
                                          s.local_correction, r.flips,
                                          detailed ? &r.correction : nullptr);
         }
-        if (window_ns) window_ns[k] = elapsed_ns(t0);
-    });
-
-    // 2. Hand every flip to the seam that contains it.
-    for (int32_t j : seams_) seam_flips_[j].clear();
-    for (int32_t k : cores_) {
-        for (int32_t v : results_[k].flips) {
-            auto it = std::upper_bound(seams_.begin(), seams_.end(), v,
-                                       [&p](int32_t x, int32_t j) { return x < p.windows[j].lo; });
-            if (it == seams_.begin() || v >= p.windows[*(it - 1)].hi) {
-                throw std::logic_error("a core window flipped a detector outside every seam");
+        // Hand every flip to the seam that contains it: the one before this
+        // core or the one after it (edges are shorter than a seam).
+        std::vector<int32_t>* before = k > 0 ? &from_after_[k - 1] : nullptr;
+        std::vector<int32_t>* after = k + 1 < num_windows ? &from_before_[k + 1] : nullptr;
+        if (before) before->clear();
+        if (after) after->clear();
+        for (int32_t v : r.flips) {
+            if (before && v >= p.windows[k - 1].lo && v < p.windows[k - 1].hi) {
+                before->push_back(v);
+            } else if (after && v >= p.windows[k + 1].lo && v < p.windows[k + 1].hi) {
+                after->push_back(v);
+            } else {
+                misrouted_.store(true, std::memory_order_relaxed);
             }
-            seam_flips_[*(it - 1)].push_back(v);
-        }
-    }
-
-    // 3. Seams, independent of each other once the cores are committed.
-    pool_->run(static_cast<int32_t>(seams_.size()), [&](int32_t i, int32_t t) {
-        const int32_t k = seams_[i];
-        const Window& w = p.windows[k];
-        const Clock::time_point t0 = window_ns ? Clock::now() : Clock::time_point{};
-        Result& r = results_[k];
-        r.obs = 0;
-        r.flips.clear();
-        r.correction.clear();
-        if (w.shape >= 0) {
-            Scratch& s = scratch_[t];
-            const auto range = in_range(w.lo, w.hi);
-            s.local.assign(range.first, range.second);
-            s.local.insert(s.local.end(), seam_flips_[k].begin(), seam_flips_[k].end());
-            detail::canonicalize(s.local);
-            for (int32_t& v : s.local) v -= w.lo;
-            s.no_flips.clear();
-            r.obs = detail::solve_window(p, w, *decoders_[t][w.shape], s.local,
-                                         s.local_correction, s.no_flips,
-                                         detailed ? &r.correction : nullptr);
         }
         if (window_ns) window_ns[k] = elapsed_ns(t0);
+        if (before && pending_[k - 1].fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            run_seam(k - 1, t);
+        }
+        if (after && pending_[k + 1].fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            run_seam(k + 1, t);
+        }
     });
+    if (misrouted_.load(std::memory_order_relaxed)) {
+        throw std::logic_error("a core window flipped a detector outside every seam");
+    }
 
     uint64_t obs = 0;
     if (correction) correction->clear();
