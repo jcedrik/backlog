@@ -3,6 +3,7 @@
 [![CI](https://github.com/jcedrik/backlog/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jcedrik/backlog/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/backlog-qec)](https://pypi.org/project/backlog-qec/)
 [![Reproduces arXiv:2610.26785](https://img.shields.io/badge/reproduces-arXiv%3A2610.26785-b31b1b)](#effective-distance-every-pair-of-faults-decoded)
 
 **A real-time quantum error correction decoder, built from scratch: from
@@ -18,7 +19,7 @@ and sinter integration; a VHDL core checked bit for bit against the C++.
 [Changelog](CHANGELOG.md)
 
 ```bash
-pip install git+https://github.com/jcedrik/backlog   # builds the C++ core: C++17 compiler and CMake
+pip install backlog-qec   # wheels for Linux, macOS (Apple Silicon) and Windows
 ```
 
 ```python
@@ -59,8 +60,8 @@ print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mea
   cores have committed, idle threads pause instead of hammering a
   hyperthread, and `make scaling` now splits the speedup into work inflation
   and idle time.
-- **Easy to pick up.** A [quickstart notebook](examples/quickstart.ipynb),
-  wheels for Linux, macOS and Windows built in CI for the first PyPI release,
+- **Easy to pick up.** `pip install backlog-qec` (wheels for Linux, macOS
+  and Windows), a [quickstart notebook](examples/quickstart.ipynb),
   [contributing notes](CONTRIBUTING.md) and a [citation file](CITATION.cff).
 
 ![Correlated decoding against plain decoding, same shots; logical error per round, backlog and PyMatching](results/correlated.png)
@@ -271,7 +272,7 @@ identified: ripple XOR chains, fixable with a parallel prefix scan.
 ## Use it
 
 ```bash
-pip install git+https://github.com/jcedrik/backlog   # or, from a clone: make install
+pip install backlog-qec   # or the latest: pip install git+https://github.com/jcedrik/backlog
 ```
 
 ```python

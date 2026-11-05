@@ -17,7 +17,7 @@ streaming window decoders and [sinter](https://github.com/quantumlib/Stim/tree/m
 integration.
 
 ```bash
-pip install git+https://github.com/jcedrik/backlog   # or, from a clone: make install
+pip install backlog-qec        # or, from a clone: make install
 ```
 
 Every cell below runs in a few seconds on a laptop."""),

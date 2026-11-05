@@ -3,6 +3,7 @@
 [![CI](https://github.com/jcedrik/backlog/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jcedrik/backlog/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/backlog-qec)](https://pypi.org/project/backlog-qec/)
 [![Reproduit arXiv:2610.26785](https://img.shields.io/badge/reproduit-arXiv%3A2610.26785-b31b1b)](#distance-effective--chaque-paire-de-fautes-décodée)
 
 **Un décodeur de correction d'erreurs quantiques temps réel, bâti de zéro :
@@ -18,7 +19,7 @@ bit à bit contre le C++.
 [Fonctionnement](docs/decoder.md) · [État de l'art](docs/related-work.md)
 
 ```bash
-pip install git+https://github.com/jcedrik/backlog   # compile le cœur C++ : compilateur C++17 et CMake
+pip install backlog-qec   # wheels pour Linux, macOS (Apple Silicon) et Windows
 ```
 
 ```python
@@ -60,9 +61,9 @@ print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1)
   fenêtres « cœur » ont commité, les threads inactifs font une pause au lieu
   de marteler un hyperthread, et `make scaling` sépare maintenant
   l'accélération en inflation du travail et en temps d'attente.
-- **Facile à prendre en main.** Un [notebook de démarrage](examples/quickstart.ipynb),
-  des wheels pour Linux, macOS et Windows construites en CI pour la première
-  version sur PyPI, des [notes pour contribuer](CONTRIBUTING.md) et un
+- **Facile à prendre en main.** `pip install backlog-qec` (wheels pour
+  Linux, macOS et Windows), un [notebook de démarrage](examples/quickstart.ipynb),
+  des [notes pour contribuer](CONTRIBUTING.md) et un
   [fichier de citation](CITATION.cff).
 
 ![Décodage corrélé contre décodage simple, mêmes tirages ; erreur logique par ronde, backlog et PyMatching](results/correlated.png)
@@ -287,7 +288,7 @@ remplacer par un préfixe parallèle. [Détails](hardware/README.md).
 ## Utilisation
 
 ```bash
-pip install git+https://github.com/jcedrik/backlog   # ou, depuis un clone : make install
+pip install backlog-qec   # ou la toute dernière : pip install git+https://github.com/jcedrik/backlog
 ```
 
 ```python
