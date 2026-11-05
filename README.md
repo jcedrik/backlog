@@ -55,7 +55,9 @@ print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mea
   Splitting every error into exactly its X part and its Z part
   (`backlog.decompose_by_basis`, now the default) turns that into a gain and
   takes the gain at d = 5 from 28% to 46%. Reported upstream:
-  [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193).
+  [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193);
+  why it happens and how to check your own setup:
+  [the write-up](docs/correlated-decoding-decomposition.md).
 - **Parallel windows without a barrier.** A seam starts as soon as its two
   cores have committed, idle threads pause instead of hammering a
   hyperthread, and `make scaling` now splits the speedup into work inflation

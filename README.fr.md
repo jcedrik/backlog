@@ -56,7 +56,9 @@ print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1)
   pour backlog. Couper chaque erreur en exactement sa partie X et sa partie Z
   (`backlog.decompose_by_basis`, maintenant le défaut) en fait un gain, et
   fait passer le gain à d = 5 de 28 % à 46 %. Signalé à PyMatching :
-  [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193).
+  [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193) ;
+  pourquoi ça arrive et comment vérifier votre propre montage :
+  [l'article (en anglais)](docs/correlated-decoding-decomposition.md).
 - **Fenêtres parallèles sans barrière.** Une couture démarre dès que ses deux
   fenêtres « cœur » ont commité, les threads inactifs font une pause au lieu
   de marteler un hyperthread, et `make scaling` sépare maintenant
