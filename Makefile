@@ -77,6 +77,9 @@ correlated-speed:  ## decoding time of plain and correlated decoders (idle machi
 correlated-plot:  ## redraw results/correlated.png and print the Lambda table
 	$(PY) python/correlated_benchmark.py plot
 
+decomposition-plot:  ## redraw results/decomposition.png: correlated vs plain matching, both decompositions
+	$(PY) python/decomposition_plot.py results/correlated_decomposition.csv results/decomposition.png
+
 faults:  ## exhaustive fault enumeration, d = 3 and 5: which pairs each decoder gets wrong (~6 min)
 	$(PY) python/fault_distance.py
 
