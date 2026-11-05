@@ -1,0 +1,4 @@
+Intel(R) Core(TM) i7-8665U CPU @ 1.90GHz
+8 hardware threads, 4 physical cores
+Dell laptop, Ubuntu 26.04 on WSL2, backlog v0.5 (no barrier between cores and seams, no spinning on hyperthreads)
+Values as printed by make scaling, rounded as printed; wall and work times not kept

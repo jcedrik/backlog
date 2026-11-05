@@ -507,6 +507,7 @@ def scaling(shots: int):
 
 
 def plot_scaling(folder: Path = SCALING_DIR):
+    """Speedup measured and modelled; with v0.5 data, also where the rest goes."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -514,8 +515,10 @@ def plot_scaling(folder: Path = SCALING_DIR):
     rows = read_csv(folder / "scaling.csv")
     counts = sorted({int(r["threads"]) for r in rows})
     colors = {9: "#4C72B0", 13: "#C44E52", 17: "#55A868"}
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
-    for ax, p in zip(axes, PS):
+    split = "inflation" in rows[0]
+    fig, axes = plt.subplots(2 if split else 1, 2, figsize=(12, 8.6 if split else 4.8),
+                             squeeze=False)
+    for ax, p in zip(axes[0], PS):
         for d, color in colors.items():
             rs = sorted((r for r in rows if int(r["d"]) == d and abs(r["p"] - p) < 1e-12),
                         key=lambda r: r["threads"])
@@ -537,16 +540,35 @@ def plot_scaling(folder: Path = SCALING_DIR):
         ax.set_yticks(yticks)
         ax.set_yticklabels([f"{y:g}" for y in yticks])
         ax.set_xlabel("threads")
-        ax.set_title(f"p = {p * 100:.1f}%", fontsize=11)
+        ax.set_title(f"speedup vs 1 thread, p = {p * 100:.1f}%", fontsize=11)
         ax.grid(True, which="both", alpha=0.25)
-    axes[0].set_ylabel("speedup vs 1 thread")
-    axes[0].legend(frameon=False, fontsize=8)
+    axes[0][0].set_ylabel("speedup vs 1 thread")
+    axes[0][0].legend(frameon=False, fontsize=8)
+    if split:
+        for ax, key, title in ((axes[1][0], "inflation",
+                                "work inflation: total window work / with 1 thread"),
+                               (axes[1][1], "busy",
+                                "busy fraction: window work / (threads x wall time)")):
+            for d, color in colors.items():
+                for p, style in zip(PS, ("-", "--")):
+                    rs = sorted((r for r in rows if int(r["d"]) == d and abs(r["p"] - p) < 1e-12),
+                                key=lambda r: r["threads"])
+                    if rs:
+                        ax.plot([r["threads"] for r in rs], [r[key] for r in rs], color=color,
+                                linestyle=style, marker="o", linewidth=1.5,
+                                label=f"d = {d}, p = {p * 100:.1f}%")
+            ax.set_xscale("log", base=2)
+            ax.set_xticks(counts)
+            ax.set_xticklabels([str(c) for c in counts])
+            ax.set_xlabel("threads")
+            ax.set_title(title, fontsize=11)
+            ax.grid(True, which="both", alpha=0.25)
+        axes[1][0].legend(frameon=False, fontsize=8)
+        axes[1][1].set_ylim(0, 1.1)
     machine = (folder / "machine.txt").read_text().splitlines()
-    fig.suptitle(f"Parallel windows, real speedup vs threads: {machine[0]}, {machine[1]}",
-                 fontsize=11)
+    fig.suptitle(f"Parallel windows on {machine[0]}, {machine[1]}", fontsize=11)
     fig.tight_layout()
     fig.savefig(folder / "scaling.png", dpi=150)
-
 
 
 def main():

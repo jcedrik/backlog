@@ -296,13 +296,34 @@ every window graph), hyperthreads share a core with spinning workers, and the
 host takes CPUs away from the virtual machine mid-phase. The core counts
 above are therefore lower bounds.
 
-Since then, `make scaling` splits the gap between model and measurement in
-two: **work inflation** (the total work of the windows with t threads,
-divided by the same with one thread: the same windows run slower when more
-cores are busy) and the **busy fraction** (window work divided by t times the
-wall time: the rest is threads waiting). The scheduler also changed under it
-(no barrier between cores and seams, no spinning on hyperthreads), so the
-laptop numbers above are the baseline the next measurement is compared to.
+`make scaling` now splits the gap between model and measurement in two:
+**work inflation** (the total work of the windows with t threads, divided by
+the same with one thread: the same windows run slower when more cores are
+busy) and the **busy fraction** (window work divided by t times the wall
+time: the rest is threads waiting). The speedup is t × busy / inflation.
+Rerun on the same laptop with the v0.5 scheduler
+(`results/scaling-i7-8665U-v0.5/`):
+
+| threads | speedup | model | work inflation | busy |
+|---|---|---|---|---|
+| 2 | 1.48 to 1.66 | 1.68 to 1.80 | 1.11 to 1.21 | 88 to 96% |
+| 4 | 1.61 to 2.09 | 2.60 to 2.88 | 1.57 to 1.72 | 67 to 84% |
+| 8 | 0.57 to 2.18 | 3.50 to 4.07 | 2.17 to 2.56 | 18 to 65% |
+
+At 4 threads, one per physical core, inflation alone caps the speedup at 2.3
+to 2.5. It does not grow with the window size (a d = 17 window has 7 times
+the detectors of a d = 9 one), which points at the clock of a 15 W chip under
+an all-core load rather than at cache pressure: sharing the read-only window
+graphs between threads, the planned next step, would not lift it, so it is
+dropped. The 16 to 33% of idle time at 4 threads is what the schedule itself
+leaves, not overhead: the model, which has no synchronization cost at all,
+keeps 4 threads busy only 65 to 72% of the time (its speedup over 4), because
+a shot of about ten core windows and their seams does not split evenly over 4
+threads. A streaming scheduler that takes the next period's windows as they
+arrive would not have that end-of-shot tail. At
+8 threads, hyperthreads share a core and inflate every window 2.2 to 2.6
+times, and with no spinning past the physical cores the wake-ups cost the
+rest: use one thread per physical core.
 
 ## 9. Correlated decoding
 

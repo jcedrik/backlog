@@ -59,9 +59,13 @@ v0.5 done:
 - [x] 26 mutants, all killed
 
 Next:
-- [ ] Rerun `make scaling` on the 4-core laptop and on a server with pinned
-      physical cores, and decide from work inflation vs idle time whether
-      sharing the read-only window graphs between threads is worth it
+- [x] Rerun `make scaling` on the 4-core laptop: at 4 threads each window
+      runs 1.6 to 1.7 times slower than alone (work inflation, flat in the
+      window size, so the clock rather than the caches) and threads are busy
+      67 to 84% of the time; sharing window graphs between threads dropped
+- [ ] Measure on a server with pinned physical cores (threads = cores)
+- [ ] Streaming scheduler that takes windows as their rounds arrive, without
+      the end-of-shot tail that leaves threads idle
 - [ ] Correlated decoding at d = 7 and 9: enumerate triples of faults (local
       triples exhaustively), fit alpha*(p) per distance
 - [ ] Other noise models: SI1000, and a model fitted to hardware data

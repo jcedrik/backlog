@@ -229,20 +229,35 @@ la ronde la plus vieille d'une couture attend environ 3 d rondes de données
 avant que son commit puisse commencer.
 
 **Mesuré sur un vrai portable à 4 cœurs** (Intel i7-8665U, 15 W, Ubuntu sous
-WSL2, ordonnanceur de la v0.4), le modèle ne tient plus au-delà de 2 threads :
+WSL2, `make scaling`), le modèle ne tient plus au-delà de 2 threads, et les
+nouveaux compteurs disent pourquoi :
 
-![Accélération réelle selon le nombre de threads sur un portable à 4 cœurs, mesurée et prédite](results/scaling-i7-8665U/scaling.png)
+![Accélération, inflation du travail et fraction occupée selon le nombre de threads sur un portable à 4 cœurs](results/scaling-i7-8665U-v0.5/scaling.png)
 
-Le modèle était optimiste de 9 à 18 % à 2 threads, de 45 à 63 % à 4, et faux
-à 8, où le décodage ralentissait (0,6x à d = 9). Il suppose que chaque cœur
-décode une fenêtre aussi vite qu'un cœur seul, alors que la fréquence turbo
-d'une puce de 15 W baisse quand plus de cœurs se réveillent, que les cœurs
-partagent une seule mémoire cache, et que des threads inactifs tournaient
-sur les hyperthreads de cœurs occupés. La v0.5 enlève la barrière entre
-fenêtres cœur et coutures et arrête l'attente active sur les hyperthreads ;
-`make scaling` donne maintenant, pour chaque nombre de threads, l'inflation
-du travail et la part du temps où les threads attendent, pour distinguer les
-limites de la machine de celles de l'ordonnanceur.
+| threads | accélération | modèle | inflation du travail | occupé |
+|---|---|---|---|---|
+| 2 | 1,48 à 1,66 | 1,68 à 1,80 | 1,11 à 1,21 | 88 à 96 % |
+| 4 | 1,61 à 2,09 | 2,60 à 2,88 | 1,57 à 1,72 | 67 à 84 % |
+| 8 | 0,57 à 2,18 | 3,50 à 4,07 | 2,17 à 2,56 | 18 à 65 % |
+
+L'accélération vaut threads × fraction occupée / inflation du travail. Avec 4
+threads, un par cœur physique, les mêmes fenêtres prennent 1,6 à 1,7 fois
+plus de temps qu'avec un seul : ça plafonne à lui seul l'accélération entre
+2,3 et 2,5, avant toute attente. L'inflation ne grandit pas avec la taille des
+fenêtres (une fenêtre à d = 17 a 7 fois plus de détecteurs qu'à d = 9), ce
+qui pointe vers l'horloge d'une puce de 15 W avec quatre cœurs occupés plutôt
+que vers les mémoires cache : partager les graphes des fenêtres entre threads
+ne la réduirait pas. Les threads sont occupés 67 à 84 % du temps, soit ce que
+permet l'ordonnancement d'un tirage complet (le modèle, sans aucun coût de
+synchronisation, obtient 65 à 72 %) : l'ordonnanceur lui-même ne coûte rien
+de mesurable. Avec 8 threads, deux hyperthreads partagent chaque cœur et chaque
+fenêtre prend 2,2 à 2,6 fois plus de temps : aucun gain sur 4. Par rapport à
+la v0.4 sur le même portable, 8 threads sont passés de 0,92-1,99x à
+1,21-2,18x à d ≥ 13 ; à 4 threads, c'est dans l'écart d'une reprise à l'autre
+(1,6 à 2,1 les deux fois). Les nombres de cœurs ci-dessus sont donc des
+bornes inférieures pour ce genre de machine : le temps réel à grande échelle
+demande des cœurs qui gardent leur fréquence sous charge (un serveur, un
+thread épinglé par cœur physique) ou du matériel dédié.
 
 ### Débit sur des expériences complètes
 
@@ -403,7 +418,8 @@ docs/          fonctionnement du décodeur, état de l'art, feuille de route (en
 ## Limites
 
 - **Passage à l'échelle mesuré sur un portable seulement.** Sur un portable
-  à 4 cœurs, le décodeur v0.4 plafonnait vers 2x à 4 threads, et les nombres
+  à 4 cœurs et 15 W, l'accélération plafonne vers 2x à 4 threads, surtout
+  parce que chaque cœur ralentit quand les autres travaillent ; les nombres
   de cœurs ci-dessus restent des bornes inférieures tant que `make scaling`
   n'a pas roulé sur un serveur avec des cœurs dédiés. Le flux rejoue des
   fenêtres mesurées sur des tirages indépendants, une approximation d'une

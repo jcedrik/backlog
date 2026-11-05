@@ -214,18 +214,33 @@ these, it stays under about a millisecond. The cost is latency: a seam's
 oldest round waits about 3 d rounds of data before its commit can start.
 
 **Measured on a real 4-core laptop** (Intel i7-8665U, 15 W, Ubuntu on WSL2,
-v0.4 scheduler), the model falls apart past 2 threads:
+`make scaling`), the model falls apart past 2 threads, and the new counters
+say why:
 
-![Real speedup vs threads on a 4-core laptop, measured and predicted](results/scaling-i7-8665U/scaling.png)
+![Speedup, work inflation and busy fraction vs threads on a 4-core laptop](results/scaling-i7-8665U-v0.5/scaling.png)
 
-The model was 9 to 18% optimistic at 2 threads, 45 to 63% at 4, and wrong at
-8, where decoding got slower (0.6x at d = 9). It assumes every core decodes a
-window as fast as one core alone, while the turbo frequency of a 15 W chip
-drops as more cores wake up, the cores share one cache, and idle workers were
-spinning on the hyperthreads of busy cores. v0.5 removes the barrier between
-cores and seams and stops spinning on hyperthreads; `make scaling` now
-reports, for every thread count, the work inflation and the share of time
-threads wait, to tell the machine's limits from the scheduler's.
+| threads | speedup | model | work inflation | busy |
+|---|---|---|---|---|
+| 2 | 1.48 to 1.66 | 1.68 to 1.80 | 1.11 to 1.21 | 88 to 96% |
+| 4 | 1.61 to 2.09 | 2.60 to 2.88 | 1.57 to 1.72 | 67 to 84% |
+| 8 | 0.57 to 2.18 | 3.50 to 4.07 | 2.17 to 2.56 | 18 to 65% |
+
+Speedup is threads × busy fraction / work inflation. With 4 threads, one per
+physical core, the same windows take 1.6 to 1.7 times longer than with one:
+that alone caps the speedup at 2.3 to 2.5, before any waiting. The inflation does
+not grow with the window size (a d = 17 window has 7 times the detectors of a
+d = 9 one), which points at the clock of a 15 W chip with four busy cores
+rather than at the caches, so sharing window graphs between threads would not
+lift it. Threads are busy 67 to 84% of the time, which is what the schedule
+of a whole shot allows (the model, with no overhead at all, gets 65 to 72%):
+the scheduler itself costs nothing measurable. With 8
+threads, two hyperthreads share each core and every window takes 2.2 to 2.6
+times longer: no gain over 4. Compared with v0.4 on the same laptop, 8 threads
+went from 0.92-1.99x to 1.21-2.18x at d ≥ 13; 4 threads stayed within the
+run-to-run spread (1.6 to 2.1 both times). So the core counts above are lower
+bounds for this kind of machine: real time at scale needs cores that keep
+their clock under load (a server, one pinned thread per physical core) or
+dedicated hardware.
 
 ### Throughput on whole experiments
 
@@ -380,11 +395,12 @@ docs/          how the decoder works, related work, roadmap
 
 ## Limitations
 
-- **Scaling measured on a laptop only.** On a 4-core laptop the v0.4 decoder
-  topped out around 2x at 4 threads, and the core counts above are lower
-  bounds until `make scaling` runs on a server with pinned cores. The stream
-  replays chain windows measured on independent shots, an approximation of
-  one long experiment.
+- **Scaling measured on a laptop only.** On a 4-core, 15 W laptop the speedup
+  tops out around 2x at 4 threads, mostly because each core slows down when
+  the others are busy; the core counts above are lower bounds until
+  `make scaling` runs on a server with pinned cores. The stream replays chain
+  windows measured on independent shots, an approximation of one long
+  experiment.
 - **One noise model.** Every number here is for uniform circuit-level noise;
   the regularization constants in particular should be refitted for another
   model (SI1000, hardware-derived).
