@@ -204,6 +204,7 @@ make tsan        # tests C++ sous ThreadSanitizer
 make compare     # balayage PyMatching contre Union-Find avec sinter (long, reprenable)
 make streaming   # fenêtres glissantes : précision, latence, backlog (quelques minutes)
 make parallel    # fenêtres en parallèle : précision, accélération, cœurs nécessaires
+make scaling     # vraie accélération avec 1, 2, 4... threads jusqu'à tous les cœurs de ta machine
 make latency     # temps de décodage des expériences complètes, sur une machine au repos
 make hw-sim      # simulation VHDL bit pour bit (requiert ghdl)
 make hw          # synthèse VHDL, placement-routage (requiert yosys, nextpnr-ice40)
@@ -264,7 +265,9 @@ docs/          fonctionnement du décodeur, feuille de route
   de cœurs ci-dessus viennent d'un modèle d'ordonnancement bâti sur les temps
   mesurés de chaque fenêtre, vérifié contre la vraie exécution à 2 threads
   seulement ; une grosse machine ajoute de la contention mémoire et cache que
-  le modèle ne voit pas. Les simulations de flux enchaînent des fenêtres
+  le modèle ne voit pas. `make scaling` mesure la vraie accélération jusqu'à
+  tous les cœurs de n'importe quelle machine, à côté de la prédiction du
+  modèle. Les simulations de flux enchaînent des fenêtres
   mesurées sur des tirages indépendants, une approximation d'une longue
   expérience.
 - **Égalité de vitesse, pas une victoire.** À p = 0,3 %, ce décodeur ne fait

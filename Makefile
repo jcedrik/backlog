@@ -1,7 +1,7 @@
 PY ?= python3
 
 .PHONY: help deps install cpp test test-cpp test-py test-cli mutants tsan quick baseline plot \
-        compare plots streaming streaming-plot parallel parallel-plot latency hw hw-sim all clean
+        compare plots streaming streaming-plot parallel parallel-plot scaling latency hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
@@ -63,6 +63,9 @@ parallel:  ## parallel windows: accuracy, 1 vs 2 thread speedup, cores needed (m
 
 parallel-plot:  ## redraw results/parallel.png from the saved data
 	cd python && $(PY) parallel_benchmark.py plot
+
+scaling:  ## real speedup with 1, 2, 4, ... threads up to every core here, into results/scaling/
+	cd python && $(PY) parallel_benchmark.py scaling
 
 latency:  ## decoding time vs PyMatching, d = 3 to 13 (run on an idle machine)
 	cd python && $(PY) latency_benchmark.py

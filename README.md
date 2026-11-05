@@ -193,6 +193,7 @@ make tsan        # C++ tests under ThreadSanitizer
 make compare     # PyMatching vs Union-Find sweep with sinter (long, resumable)
 make streaming   # sliding windows: accuracy, latency, backlog (a few minutes)
 make parallel    # parallel windows: accuracy, speedup, cores needed (a few minutes)
+make scaling     # real speedup with 1, 2, 4, ... threads up to every core of your machine
 make latency     # whole-shot decoding time, on an idle machine
 make hw-sim      # VHDL simulation, bit-exact (needs ghdl)
 make hw          # VHDL synthesis, place and route (needs yosys, nextpnr-ice40)
@@ -246,7 +247,8 @@ docs/          how the decoder works, roadmap
 - **Models beyond 2 cores.** This machine has 2 cores. The core counts above
   come from a scheduling model built on measured window times, checked
   against the real 2-thread run only; a big machine adds memory and cache
-  contention the model does not see. The stream replays chain windows
+  contention the model does not see. `make scaling` measures the real speedup
+  up to every core of any machine, next to the model's prediction. The stream replays chain windows
   measured on independent shots, an approximation of one long experiment.
 - **Speed parity, not a win.** At p = 0.3% this decoder only matches
   PyMatching 2 on one core.

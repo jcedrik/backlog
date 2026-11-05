@@ -23,6 +23,12 @@ project   The model on a stream: rounds arrive every microsecond, core windows
     python3 parallel_benchmark.py speedup       # on an idle machine
     python3 parallel_benchmark.py project       # uses the speedup data
     python3 parallel_benchmark.py plot
+    python3 parallel_benchmark.py scaling     # real speedup up to every core here
+
+scaling   Wall time per shot with 1, 2, 4, ... threads up to every core of the
+          machine it runs on, against the model's prediction for each count.
+          This is the check of the model beyond 2 cores. Results go to
+          results/scaling/ (not tracked by git).
 """
 from __future__ import annotations
 
@@ -30,6 +36,8 @@ import argparse
 import csv
 import heapq
 import math
+import os
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +46,7 @@ import backlog
 from generate_circuits import surface_code_circuit
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
+SCALING_DIR = RESULTS / "scaling"
 ACCURACY_CSV = RESULTS / "parallel_accuracy.csv"
 SPEEDUP_CSV = RESULTS / "parallel_speedup.csv"
 WINDOWS_NPZ = RESULTS / "parallel_windows.npz"
@@ -368,10 +377,119 @@ def plot():
     fig.savefig(RESULTS / "parallel.png", dpi=150)
     print(f"wrote {RESULTS / 'parallel.png'}")
 
+# -------------------------------------------------------------------- scaling
+
+def cpu_name() -> str:
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or "unknown CPU"
+
+
+def thread_counts():
+    n = os.cpu_count() or 1
+    counts = [1]
+    while counts[-1] * 2 < n:
+        counts.append(counts[-1] * 2)
+    if n > 1:
+        counts.append(n)
+    return counts
+
+
+def scaling(shots: int):
+    counts = thread_counts()
+    print(f"{cpu_name()}, {os.cpu_count()} hardware threads: measuring {counts}")
+    rows = []
+    for p in PS:
+        for d in (9, 13, 17):
+            circuit = surface_code_circuit(distance=d, rounds=20 * d, p=p)
+            dem = circuit.detector_error_model(decompose_errors=True)
+            packed = packed_shots(circuit, shots, seed=3000 + d)
+            dec = {t: backlog.ParallelWindowDecoder.from_dem(dem, commit=d, buffer=d, seam=d,
+                                                             threads=t) for t in counts}
+            for x in dec.values():
+                x.decode_batch_bit_packed(packed[:10])
+            wall = {t: np.full(shots, np.inf) for t in counts}
+            work = np.full((shots, dec[1].num_windows), np.inf)
+            for _ in range(REPS):  # interleaved passes, best of REPS per shot
+                for t in counts:
+                    wall[t] = np.minimum(wall[t], dec[t].shot_latency_ns(packed) / 1000.0)
+                work = np.minimum(work, dec[1].window_latency_ns(packed) / 1000.0)
+            kinds = [w[0] for w in dec[1].windows]
+            core_idx = [i for i, k in enumerate(kinds) if k == "core"]
+            seam_idx = [i for i, k in enumerate(kinds) if k == "seam"]
+            serial = np.maximum(wall[1] - work.sum(axis=1), 0.0)
+            base = float(np.mean(wall[1]))
+            for t in counts:
+                model = serial + np.array([phase_makespan(work[s, core_idx], t) +
+                                           phase_makespan(work[s, seam_idx], t)
+                                           for s in range(shots)])
+                rows.append({"d": d, "p": p, "threads": t, "wall_us": float(np.mean(wall[t])),
+                             "speedup": base / float(np.mean(wall[t])),
+                             "model_speedup": base / float(np.mean(model))})
+            line = "  ".join(f"{r['threads']:>2d}t {r['speedup']:5.2f}x (model {r['model_speedup']:5.2f}x)"
+                             for r in rows if r["d"] == d and r["p"] == p)
+            print(f"p={p} d={d:2d}: {line}")
+    SCALING_DIR.mkdir(parents=True, exist_ok=True)
+    out = SCALING_DIR / "scaling.csv"
+    with out.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    with (SCALING_DIR / "machine.txt").open("w") as f:
+        f.write(f"{cpu_name()}\n{os.cpu_count()} hardware threads\n{platform.platform()}\n")
+    plot_scaling()
+    print(f"wrote {out} and {SCALING_DIR / 'scaling.png'}: paste the lines above to compare")
+
+
+def plot_scaling():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rows = read_csv(SCALING_DIR / "scaling.csv")
+    counts = sorted({int(r["threads"]) for r in rows})
+    colors = {9: "#4C72B0", 13: "#C44E52", 17: "#55A868"}
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
+    for ax, p in zip(axes, PS):
+        for d, color in colors.items():
+            rs = sorted((r for r in rows if int(r["d"]) == d and abs(r["p"] - p) < 1e-12),
+                        key=lambda r: r["threads"])
+            if not rs:
+                continue
+            t = [r["threads"] for r in rs]
+            ax.plot(t, [r["speedup"] for r in rs], color=color, marker="o", linewidth=1.8,
+                    label=f"d = {d}, measured")
+            ax.plot(t, [r["model_speedup"] for r in rs], color=color, marker="o",
+                    markerfacecolor="white", linestyle="--", linewidth=1.2,
+                    label=f"d = {d}, model")
+        ax.plot(counts, counts, color="#555555", linestyle=":", linewidth=1, label="ideal")
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log", base=2)
+        ax.set_xticks(counts)
+        ax.set_xticklabels([str(c) for c in counts])
+        ax.set_yticks(counts)
+        ax.set_yticklabels([str(c) for c in counts])
+        ax.set_xlabel("threads")
+        ax.set_title(f"p = {p * 100:.1f}%", fontsize=11)
+        ax.grid(True, which="both", alpha=0.25)
+    axes[0].set_ylabel("speedup vs 1 thread")
+    axes[0].legend(frameon=False, fontsize=8)
+    machine = (SCALING_DIR / "machine.txt").read_text().splitlines()
+    fig.suptitle(f"Parallel windows, real speedup vs threads: {machine[0]}, {machine[1]}",
+                 fontsize=11)
+    fig.tight_layout()
+    fig.savefig(SCALING_DIR / "scaling.png", dpi=150)
+
+
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["accuracy", "speedup", "project", "plot"])
+    ap.add_argument("mode", choices=["accuracy", "speedup", "project", "plot", "scaling"])
     ap.add_argument("--shots", type=int, default=None)
     args = ap.parse_args()
     if args.mode == "accuracy":
@@ -380,6 +498,8 @@ def main():
         speedup(args.shots or 300)
     elif args.mode == "project":
         project()
+    elif args.mode == "scaling":
+        scaling(args.shots or 300)
     else:
         plot()
 
