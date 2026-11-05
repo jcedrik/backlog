@@ -39,8 +39,13 @@ Done:
       for d = 17, with 15% headroom
 
 Next:
-- [ ] Run the parallel decoder on a many-core machine to check the model
-      beyond 2 cores (memory and cache contention)
+- [x] Check the model beyond 2 cores on a real machine: on a 4-core laptop
+      (i7-8665U) 2x was measured at 4 threads against 3x predicted, and
+      hyperthreads made it slower, so the model gives lower bounds
+- [ ] Share the read-only window graphs between thread decoders (one copy
+      per shape, not per thread) to cut cache pressure
+- [ ] Spin only when every worker has a physical core to itself
+- [ ] Measure on a server with pinned physical cores (threads = cores)
 - [ ] Logical clock cost: report how long a feed-forward decision waits for
       its window, and shrink it (smaller seams, earlier commits)
 - [ ] Faster than PyMatching 2 at p = 0.3%: profile shows no single hotspot,

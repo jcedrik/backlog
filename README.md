@@ -39,12 +39,13 @@ least 68 logical errors per point. Error bars are one standard deviation.
 - **Speed: parity with PyMatching 2, not a blowout.** On one core, this
   decoder is 15 to 19% faster at p = 0.1% from d = 9, level at p = 0.3%, and
   slower at d = 3 (repeat runs agree within about 5%).
-- **Streaming works, and scales with cores.** Windows with a buffer of d
-  rounds cost at most 2.3% in logical errors. One core keeps up with 1 µs
-  rounds to d = 9 at p = 0.1% and to d = 5 at p = 0.3%; past that, the
-  backlog grows. Parallel windows split the work over cores: 1.6 to 1.85
-  times faster on 2 real cores, and by the measured window times, 4 cores
-  keep up to d = 17 at p = 0.1%, 15 cores at p = 0.3%.
+- **Streaming works; scaling with cores is the hard part.** Windows with a
+  buffer of d rounds cost at most 2.3% in logical errors. One core keeps up
+  with 1 µs rounds to d = 9 at p = 0.1% and to d = 5 at p = 0.3%; past that,
+  the backlog grows. Parallel windows split the work over cores: 1.6 to 1.85
+  times faster on 2 cores, but only about 2 times faster with 4 cores on a
+  real laptop, where the scheduling model predicted 3, and slower again with
+  8 hyperthreads. The core counts the model gives are lower bounds.
 - **Same answer as a slow, obviously correct reference.** The fast decoder
   returns the exact same correction as a reference implementation on 75,000
   fuzzed cases, the parallel decoder gives the same answer for any number of
@@ -107,6 +108,21 @@ both sides) all at once, then the seams between them, also all at once
 With fewer cores the delay grows without bound (bottom right, d = 17); with
 these, it stays under about a millisecond. The cost is latency: a seam's
 oldest round waits about 3 d rounds of data before its commit can start.
+
+**Measured on a real 4-core laptop** (Intel i7-8665U, 15 W, Ubuntu on WSL2),
+the model falls apart past 2 threads:
+
+![Real speedup vs threads on a 4-core laptop, measured and predicted](results/scaling-i7-8665U/scaling.png)
+
+The model is 9 to 18% optimistic at 2 threads, 45 to 63% at 4, and wrong at 8,
+where decoding gets slower (0.6x at d = 9). It assumes every core decodes a
+window as fast as one core alone. The likely culprits: the turbo frequency of
+a 15 W chip drops as more cores wake up, the four cores share one cache, two
+hyperthreads share each core while idle workers spin, and Windows takes CPUs
+away from the Linux VM in the middle of a phase. So the core counts above are
+lower bounds: real time at scale needs dedicated cores (a server, one pinned
+thread per physical core) or dedicated hardware. `make scaling` reproduces
+this measurement on any machine.
 
 ### Throughput on whole experiments
 
@@ -244,11 +260,10 @@ docs/          how the decoder works, roadmap
 
 ## Limitations
 
-- **Models beyond 2 cores.** This machine has 2 cores. The core counts above
-  come from a scheduling model built on measured window times, checked
-  against the real 2-thread run only; a big machine adds memory and cache
-  contention the model does not see. `make scaling` measures the real speedup
-  up to every core of any machine, next to the model's prediction. The stream replays chain windows
+- **Scaling measured on a laptop only.** On a 4-core laptop the real speedup
+  tops out around 2x at 4 threads, against 3x for the model, and drops with
+  hyperthreads, so the model's core counts are lower bounds until measured on
+  a server with pinned cores (`make scaling`). The stream replays chain windows
   measured on independent shots, an approximation of one long experiment.
 - **Speed parity, not a win.** At p = 0.3% this decoder only matches
   PyMatching 2 on one core.
@@ -266,10 +281,11 @@ docs/          how the decoder works, roadmap
 
 Done: Stim + PyMatching baseline, weighted event-driven Union-Find with
 sinter integration, sliding-window streaming with the backlog measured,
-parallel windows that remove it given enough cores, 1D VHDL core. Next: a
-parallel prefix scan in the VHDL core, then a 2D surface code core, so one
-small FPGA can do the work of many CPU cores. Details in
-[docs/roadmap.md](docs/roadmap.md).
+parallel windows, measured on 2 to 8 threads. Next: make the parallel decoder
+scale on real cores (share the read-only window graphs between threads, no
+spinning on hyperthreads, a server with pinned cores), then a parallel prefix
+scan in the VHDL core and a 2D surface code core, so one small FPGA can do the
+work of many CPU cores. Details in [docs/roadmap.md](docs/roadmap.md).
 
 ## References
 

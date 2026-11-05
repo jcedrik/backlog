@@ -42,13 +42,14 @@ d'erreur valent un écart-type.
   décodeur est 15 à 19 % plus rapide à p = 0,1 % à partir de d = 9, à égalité
   à p = 0,3 %, et plus lent à d = 3 (les reprises concordent à environ 5 %
   près).
-- **Le flux continu marche, et passe à l'échelle avec les cœurs.** Des
-  fenêtres avec un buffer de d rondes coûtent au plus 2,3 % d'erreurs
-  logiques. Un seul cœur suit des rondes de 1 µs jusqu'à d = 9 à p = 0,1 % et
-  jusqu'à d = 5 à p = 0,3 % ; au-delà, le retard s'accumule. Les fenêtres en
-  parallèle répartissent le travail : 1,6 à 1,85 fois plus rapide sur 2 vrais
-  cœurs, et d'après les temps mesurés de chaque fenêtre, 4 cœurs suivent
-  jusqu'à d = 17 à p = 0,1 %, 15 cœurs à p = 0,3 %.
+- **Le flux continu marche ; passer à l'échelle avec les cœurs, c'est le plus
+  dur.** Des fenêtres avec un buffer de d rondes coûtent au plus 2,3 %
+  d'erreurs logiques. Un seul cœur suit des rondes de 1 µs jusqu'à d = 9 à
+  p = 0,1 % et jusqu'à d = 5 à p = 0,3 % ; au-delà, le retard s'accumule. Les
+  fenêtres en parallèle répartissent le travail : 1,6 à 1,85 fois plus rapide
+  sur 2 cœurs, mais seulement environ 2 fois avec 4 cœurs sur un vrai
+  portable, là où le modèle d'ordonnancement prédisait 3, et plus lent avec 8
+  hyperthreads. Les nombres de cœurs du modèle sont des bornes inférieures.
 - **Même réponse qu'une référence lente et évidemment correcte.** Le décodeur
   rapide rend exactement la même correction qu'une implémentation de
   référence sur 75 000 cas aléatoires, le décodeur parallèle donne la même
@@ -117,6 +118,22 @@ Avec moins de cœurs, le délai croît sans limite (en bas à droite, d = 17) ;
 avec ceux-là, il reste sous environ une milliseconde. Le prix est la latence :
 la ronde la plus vieille d'une couture attend environ 3 d rondes de données
 avant que son commit puisse commencer.
+
+**Mesuré sur un vrai portable à 4 cœurs** (Intel i7-8665U, 15 W, Ubuntu sous
+WSL2), le modèle décroche au-delà de 2 threads :
+
+![Vraie accélération selon le nombre de threads sur un portable à 4 cœurs, mesurée et prédite](results/scaling-i7-8665U/scaling.png)
+
+Le modèle est optimiste de 9 à 18 % à 2 threads, de 45 à 63 % à 4, et faux à
+8, où le décodage ralentit (0,6x à d = 9). Il suppose que chaque cœur décode
+une fenêtre aussi vite qu'un cœur seul. Les causes probables : le turbo d'une
+puce de 15 W baisse quand plus de cœurs se réveillent, les quatre cœurs
+partagent une seule mémoire cache, deux hyperthreads se partagent chaque cœur
+pendant que les threads inactifs tournent à vide, et Windows enlève des CPU à
+la VM Linux au milieu d'une phase. Les nombres de cœurs ci-dessus sont donc
+des bornes inférieures : le temps réel à grande échelle demande des cœurs
+dédiés (un serveur, un thread épinglé par cœur physique) ou du matériel
+dédié. `make scaling` refait cette mesure sur n'importe quelle machine.
 
 ### Débit sur des expériences complètes
 
@@ -261,15 +278,13 @@ docs/          fonctionnement du décodeur, feuille de route
 
 ## Limites
 
-- **Des modèles au-delà de 2 cœurs.** Cette machine a 2 cœurs. Les nombres
-  de cœurs ci-dessus viennent d'un modèle d'ordonnancement bâti sur les temps
-  mesurés de chaque fenêtre, vérifié contre la vraie exécution à 2 threads
-  seulement ; une grosse machine ajoute de la contention mémoire et cache que
-  le modèle ne voit pas. `make scaling` mesure la vraie accélération jusqu'à
-  tous les cœurs de n'importe quelle machine, à côté de la prédiction du
-  modèle. Les simulations de flux enchaînent des fenêtres
-  mesurées sur des tirages indépendants, une approximation d'une longue
-  expérience.
+- **Passage à l'échelle mesuré sur un portable seulement.** Sur un portable à
+  4 cœurs, la vraie accélération plafonne vers 2x à 4 threads, contre 3x pour
+  le modèle, et baisse avec les hyperthreads : les nombres de cœurs du modèle
+  restent des bornes inférieures tant qu'on n'a pas mesuré sur un serveur aux
+  cœurs épinglés (`make scaling`). Les simulations de flux enchaînent des
+  fenêtres mesurées sur des tirages indépendants, une approximation d'une
+  longue expérience.
 - **Égalité de vitesse, pas une victoire.** À p = 0,3 %, ce décodeur ne fait
   qu'égaler PyMatching 2 sur un cœur.
 - **Précision.** L'Union-Find pondéré fait encore 5 à 20 % plus d'erreurs
@@ -289,9 +304,12 @@ docs/          fonctionnement du décodeur, feuille de route
 
 Fait : baseline Stim + PyMatching, Union-Find pondéré piloté par événements
 avec intégration sinter, décodage en fenêtres glissantes avec le backlog
-mesuré, fenêtres en parallèle qui le font disparaître avec assez de cœurs,
-cœur VHDL 1D. À venir : scan préfixe parallèle dans le cœur VHDL, puis un
-cœur 2D de surface code, pour qu'un petit FPGA fasse le travail de plusieurs
-cœurs de CPU. Détails dans [docs/roadmap.md](docs/roadmap.md).
+mesuré, fenêtres en parallèle mesurées de 2 à 8 threads. À venir : faire
+passer le décodeur parallèle à l'échelle sur de vrais cœurs (partager les
+graphes des fenêtres entre threads, ne pas tourner à vide sur les
+hyperthreads, un serveur aux cœurs épinglés), puis un scan préfixe parallèle
+dans le cœur VHDL et un cœur 2D de surface code, pour qu'un petit FPGA fasse
+le travail de plusieurs cœurs de CPU. Détails dans
+[docs/roadmap.md](docs/roadmap.md).
 
 Les références et la licence (MIT) sont dans la [version anglaise](README.md).

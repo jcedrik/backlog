@@ -278,15 +278,27 @@ With fewer cores the delay grows without bound; with these, it stays under
 about a millisecond. The price is latency: the oldest round of a seam waits
 for C + B + G rounds of data before its commit can even start, about 3 d µs.
 
+**Checked on a real 4-core laptop** (Intel i7-8665U, 15 W, Ubuntu on WSL2,
+`make scaling`, data in `results/scaling-i7-8665U/`), the model does not
+hold beyond 2 threads. Measured speedups were 1.56 to 1.69 at 2 threads
+(model: 1.80 to 1.85), 1.83 to 2.11 at 4 (model: about 3) and 0.60 to 1.99 at
+8, where the model expected over 4. The model assumes each core decodes a
+window as fast as one core alone; on this laptop the turbo frequency falls as
+cores wake up, the cores share one cache (each thread holds its own copy of
+every window graph), hyperthreads share a core with spinning workers, and the
+host takes CPUs away from the virtual machine mid-phase. The core counts
+above are therefore lower bounds.
+
 ## 9. Limits
 
 - Graphlike error models only: hyperedges must be decomposed, which Stim
   does with `decompose_errors=True`. When two parallel edges flip different
   observables, the likelier one is kept and the conflict is counted.
 - At most 64 logical observables (one machine word per edge).
-- The core counts beyond 2 come from a model built on measured window times
-  and checked on 2 cores only. A machine with many cores adds memory and
-  cache contention the model does not see.
+- The parallel scheduling model is optimistic beyond 2 cores: on a 4-core
+  laptop it predicted about 3x at 4 threads where 2x was measured, and over
+  4x at 8 threads where hyperthreads made decoding slower. Its core counts
+  are lower bounds.
 - The window decoders need detectors numbered in time order, which holds for
   Stim circuits.
 

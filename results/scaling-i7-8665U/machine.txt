@@ -1,0 +1,4 @@
+Intel(R) Core(TM) i7-8665U CPU @ 1.90GHz
+8 hardware threads (4 cores)
+Dell laptop, Ubuntu 26.04 on WSL2, plugged in, best performance mode
+Values as printed by make scaling, rounded to 0.01; wall times not kept

@@ -446,12 +446,12 @@ def scaling(shots: int):
     print(f"wrote {out} and {SCALING_DIR / 'scaling.png'}: paste the lines above to compare")
 
 
-def plot_scaling():
+def plot_scaling(folder: Path = SCALING_DIR):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    rows = read_csv(SCALING_DIR / "scaling.csv")
+    rows = read_csv(folder / "scaling.csv")
     counts = sorted({int(r["threads"]) for r in rows})
     colors = {9: "#4C72B0", 13: "#C44E52", 17: "#55A868"}
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
@@ -472,25 +472,29 @@ def plot_scaling():
         ax.set_yscale("log", base=2)
         ax.set_xticks(counts)
         ax.set_xticklabels([str(c) for c in counts])
-        ax.set_yticks(counts)
-        ax.set_yticklabels([str(c) for c in counts])
+        low = min(r["speedup"] for r in rows)
+        yticks = ([0.5] if low < 1 else []) + counts
+        ax.set_yticks(yticks)
+        ax.set_yticklabels([f"{y:g}" for y in yticks])
         ax.set_xlabel("threads")
         ax.set_title(f"p = {p * 100:.1f}%", fontsize=11)
         ax.grid(True, which="both", alpha=0.25)
     axes[0].set_ylabel("speedup vs 1 thread")
     axes[0].legend(frameon=False, fontsize=8)
-    machine = (SCALING_DIR / "machine.txt").read_text().splitlines()
+    machine = (folder / "machine.txt").read_text().splitlines()
     fig.suptitle(f"Parallel windows, real speedup vs threads: {machine[0]}, {machine[1]}",
                  fontsize=11)
     fig.tight_layout()
-    fig.savefig(SCALING_DIR / "scaling.png", dpi=150)
+    fig.savefig(folder / "scaling.png", dpi=150)
 
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["accuracy", "speedup", "project", "plot", "scaling"])
+    ap.add_argument("mode", choices=["accuracy", "speedup", "project", "plot", "scaling",
+                                     "scaling-plot"])
     ap.add_argument("--shots", type=int, default=None)
+    ap.add_argument("--dir", default=str(SCALING_DIR), help="scaling-plot: results folder")
     args = ap.parse_args()
     if args.mode == "accuracy":
         accuracy(args.shots or 20_000, 0.005)
@@ -500,6 +504,8 @@ def main():
         project()
     elif args.mode == "scaling":
         scaling(args.shots or 300)
+    elif args.mode == "scaling-plot":
+        plot_scaling(Path(args.dir))
     else:
         plot()
 
