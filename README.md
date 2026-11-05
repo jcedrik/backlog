@@ -378,7 +378,8 @@ make help        # everything else
 7. **Hardware.** The VHDL testbench compares every output to the golden model
    bit for bit, and checks the syndrome invariant independently.
 
-All of it runs in CI on every push.
+All of it runs in CI on every push, and the C++ and Python suites also run
+on macOS (Apple Clang) and Windows (MSVC).
 
 ## Layout
 

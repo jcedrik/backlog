@@ -399,7 +399,8 @@ make help        # tout le reste
    référence bit à bit, et vérifie l'invariant du syndrome de façon
    indépendante.
 
-Tout ça roule en CI à chaque push.
+Tout ça roule en CI à chaque push, et les suites C++ et Python roulent aussi
+sur macOS (Apple Clang) et Windows (MSVC).
 
 ## Organisation
 

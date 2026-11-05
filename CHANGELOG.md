@@ -21,6 +21,8 @@
   error suppression factor, fault enumeration, laptop scaling analysis.
 - Quickstart notebook, wheels workflow for PyPI, citation file, contributing
   notes, related-work survey, 26 mutants.
+- Builds with Apple Clang and MSVC as well as GCC, and CI runs the C++ and
+  Python test suites on macOS and Windows on every push.
 
 ## 0.4.0 (2026-11-04)
 
