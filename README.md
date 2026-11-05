@@ -14,7 +14,8 @@ and faster at large distance; streaming and parallel window decoders; Stim
 and sinter integration; a VHDL core checked bit for bit against the C++.
 
 [Version française](README.fr.md) · [Quickstart notebook](examples/quickstart.ipynb) ·
-[How it works](docs/decoder.md) · [State of the art](docs/related-work.md)
+[How it works](docs/decoder.md) · [State of the art](docs/related-work.md) ·
+[Changelog](CHANGELOG.md)
 
 ```bash
 pip install git+https://github.com/jcedrik/backlog   # builds the C++ core: C++17 compiler and CMake
@@ -52,7 +53,8 @@ print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mea
   logical errors than plain decoding, for PyMatching and backlog alike.
   Splitting every error into exactly its X part and its Z part
   (`backlog.decompose_by_basis`, now the default) turns that into a gain and
-  takes the gain at d = 5 from 28% to 46%.
+  takes the gain at d = 5 from 28% to 46%. Reported upstream:
+  [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193).
 - **Parallel windows without a barrier.** A seam starts as soon as its two
   cores have committed, idle threads pause instead of hammering a
   hyperthread, and `make scaling` now splits the speedup into work inflation
@@ -321,7 +323,7 @@ sinter collect --circuits circuit.stim --decoders backlog-uf-corr pymatching \
 Using PyMatching's correlated matching on a Stim circuit? Decompose the
 model with `backlog.decompose_by_basis(dem)` rather than Stim's
 `decompose_errors=True`: that is the decomposition that makes correlations
-pay (see above).
+pay (see above, and [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193)).
 
 ## Reproduce
 

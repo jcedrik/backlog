@@ -14,7 +14,7 @@ PyMatching, et plus rapide à grande distance ; décodeurs en fenêtres
 glissantes et parallèles ; intégration Stim et sinter ; un cœur VHDL vérifié
 bit à bit contre le C++.
 
-[English version](README.md) · [Notebook de démarrage](examples/quickstart.ipynb) ·
+[English version](README.md) · [Notebook de démarrage](examples/quickstart.ipynb) · [Historique](CHANGELOG.md) ·
 [Fonctionnement](docs/decoder.md) · [État de l'art](docs/related-work.md)
 
 ```bash
@@ -54,7 +54,8 @@ print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1)
   *plus* d'erreurs logiques que le décodage simple, pour PyMatching comme
   pour backlog. Couper chaque erreur en exactement sa partie X et sa partie Z
   (`backlog.decompose_by_basis`, maintenant le défaut) en fait un gain, et
-  fait passer le gain à d = 5 de 28 % à 46 %.
+  fait passer le gain à d = 5 de 28 % à 46 %. Signalé à PyMatching :
+  [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193).
 - **Fenêtres parallèles sans barrière.** Une couture démarre dès que ses deux
   fenêtres « cœur » ont commité, les threads inactifs font une pause au lieu
   de marteler un hyperthread, et `make scaling` sépare maintenant
@@ -338,7 +339,7 @@ sinter collect --circuits circuit.stim --decoders backlog-uf-corr pymatching \
 Vous utilisez le « correlated matching » de PyMatching sur un circuit Stim ?
 Décomposez le modèle avec `backlog.decompose_by_basis(dem)` plutôt qu'avec
 `decompose_errors=True` de Stim : c'est cette décomposition qui rend les
-corrélations payantes (voir plus haut).
+corrélations payantes (voir plus haut, et [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193)).
 
 ## Reproduire
 

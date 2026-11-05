@@ -66,7 +66,9 @@ README):
    X part and its Z part (as the Tesseract decoder's coordinate decomposition
    does, and as [19] uses) turns that into a gain, and lifts the gain at d = 5
    from 28% to 46%. `backlog.decompose_by_basis` does this split, and
-   backlog's correlated decoders apply it by default.
+   backlog's correlated decoders apply it by default. Reported to PyMatching
+   with a stand-alone reproduction:
+   [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193).
 
 ## Where backlog stands
 

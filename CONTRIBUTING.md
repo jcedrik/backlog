@@ -48,4 +48,6 @@ To publish to PyPI without storing a token, once:
 2. on GitHub, Settings > Environments > New environment `pypi`.
 
 Then a release is: bump the version in `pyproject.toml` and
-`src/backlog/__init__.py`, commit, `git tag v0.5.0 && git push --tags`.
+`src/backlog/__init__.py`, add its entry to `CHANGELOG.md`, commit, then push a
+signed tag (`git tag -s v0.5.0 -m "backlog 0.5.0" && git push origin v0.5.0`).
+The PyPI page shows `docs/pypi.md`, so its links must be absolute.

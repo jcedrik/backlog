@@ -1,7 +1,7 @@
 name: wheels
 
 # Binary wheels for Linux, macOS and Windows, so that `pip install backlog-qec`
-# needs no compiler. Runs by hand (Actions > wheels > Run workflow) and on
+# needs no compiler (cibuildwheel 4). Runs by hand (Actions > wheels > Run workflow) and on
 # version tags; a tag also publishes to PyPI through trusted publishing (see
 # CONTRIBUTING.md for the one-time PyPI setup).
 on:
@@ -16,7 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-13, windows-2022]
+        # Linux x86-64 and ARM, macOS on Apple Silicon, Windows x86-64. Intel
+        # Macs and other platforms build from the source distribution.
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,7 +55,9 @@ jobs:
     needs: [wheels, sdist]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
-    environment: pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/p/backlog-qec
     permissions:
       id-token: write
     steps:
