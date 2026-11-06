@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/backlog-qec)](https://pypi.org/project/backlog-qec/)
 [![Reproduces arXiv:2610.26785](https://img.shields.io/badge/reproduces-arXiv%3A2610.26785-b31b1b)](#effective-distance-every-pair-of-faults-decoded)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24015235.svg)](https://doi.org/10.5281/zenodo.24015235)
 
 **A real-time quantum error correction decoder, built from scratch: from
 simulation to FPGA.**
@@ -501,7 +502,10 @@ small FPGA can do the work of many CPU cores. Details in
 ## Citing
 
 If backlog helps your work, cite it with [CITATION.cff](CITATION.cff) (GitHub's
-"Cite this repository" button), and the papers below that it builds on.
+"Cite this repository" button), and the papers below that it builds on. Every
+release is archived on Zenodo; the DOI
+[10.5281/zenodo.24015235](https://doi.org/10.5281/zenodo.24015235) covers all
+versions and resolves to the latest.
 
 ## References
 

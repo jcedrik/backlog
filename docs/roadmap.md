@@ -120,7 +120,9 @@ Next:
       ([Deltakit#421](https://github.com/Deltakit/deltakit/issues/421))
 - [x] PyPI releases (`pip install backlog-qec`), wheels for Linux, macOS
       and Windows built and published by `.github/workflows/wheels.yml`
-- [ ] A DOI for every release, through Zenodo's GitHub integration
+- [x] A DOI for every release, through Zenodo's GitHub integration
+      ([10.5281/zenodo.24015235](https://doi.org/10.5281/zenodo.24015235),
+      all versions)
 - [x] Quickstart notebook, citation file, contributing notes
 
 ## Definition of done for the portfolio

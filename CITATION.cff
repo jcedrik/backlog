@@ -14,6 +14,7 @@ type: software
 license: MIT
 version: "0.6.0"
 date-released: "2026-11-05"
+doi: "10.5281/zenodo.24015235"
 repository-code: "https://github.com/jcedrik/backlog"
 keywords:
   - quantum error correction

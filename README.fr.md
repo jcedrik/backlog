@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/backlog-qec)](https://pypi.org/project/backlog-qec/)
 [![Reproduit arXiv:2610.26785](https://img.shields.io/badge/reproduit-arXiv%3A2610.26785-b31b1b)](#distance-effective--chaque-paire-de-fautes-décodée)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24015235.svg)](https://doi.org/10.5281/zenodo.24015235)
 
 **Un décodeur de correction d'erreurs quantiques temps réel, bâti de zéro :
 de la simulation jusqu'au FPGA.**
@@ -535,7 +536,9 @@ CPU. Détails dans [docs/roadmap.md](docs/roadmap.md).
 
 Si backlog vous sert, citez-le avec [CITATION.cff](CITATION.cff) (le bouton
 « Cite this repository » de GitHub), ainsi que les articles ci-dessous sur
-lesquels il s'appuie.
+lesquels il s'appuie. Chaque version est archivée sur Zenodo ; le DOI
+[10.5281/zenodo.24015235](https://doi.org/10.5281/zenodo.24015235) couvre
+toutes les versions et mène à la plus récente.
 
 ## Références
 
