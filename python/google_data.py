@@ -303,7 +303,7 @@ def run(root: Path, out_csv: Path, *, patches=None, bases=None, rounds=None, dem
         rows += decode_experiment(exp, dem_modes, max_shots, google, log)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(out_csv, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=FIELDS)
+        w = csv.DictWriter(fh, fieldnames=FIELDS, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
     log(f"wrote {out_csv}")

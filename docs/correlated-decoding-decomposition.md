@@ -136,12 +136,31 @@ correlated Union-Find gives the same picture
 Which errors Stim mis-splits depends on the circuit, not on the noise
 strengths: 88 of the 286 errors of the CX model at d = 3 under both noise
 models, 89 of 299 for the CZ model. What changes is how much probability they
-carry, and the gap follows that share. SI1000 adds its extra noise on
-measurement, reset and idling, whose errors Stim splits correctly or does not
-need to split; with CZ gates, the mis-split errors carry less of the
-probability too (4.4% instead of 6.1% under uniform noise). In the paper's own
-setting the gap is down to 5 to 6%: easy to miss, but still clear with
-2 million shots (paired z = −9.9 at d = 3, −3.9 at d = 5).
+carry, and the gap follows that share. Weighing the error models makes this
+concrete (`python python/noise_study.py --mass`, no sampling involved):
+
+| Error model, d = 3 | Probability in errors that touch both bases | ... that Stim mis-splits | Gap |
+|---|---|---|---|
+| CX gates, uniform noise | 18.9% | 6.1% | −38% |
+| CX gates, SI1000 | 11.9% | 3.0% | −19% |
+| CZ gates, uniform noise | 19.2% | 4.4% | −21% |
+| CZ gates, SI1000 | 14.3% | 2.7% | −6% |
+
+Only an error that flips detectors of both types, a Y-like error, gives a
+decomposition anything to get wrong. Under uniform noise those carry 19% of
+the total error probability; SI1000 puts 5p on measurement flips and 2p on
+resets, which touch one basis and are never ambiguous, and only p/10 on
+single-qubit gates and idling, so the two-qubit depolarizing channel is a
+smaller share of the whole and the Y-like errors drop to 12%. The gates act
+on the other factor: with CZ gates and the paper's circuit, Stim mis-splits a
+smaller part of the Y-like mass (4.4% of the total instead of 6.1% under the
+same uniform noise). Across the eight settings the gap tracks the mis-split
+share, roughly 5 points of gap per point of share (correlation 0.95)
+([`results/noise_study_mass.csv`](../results/noise_study_mass.csv)). So the
+effect should be largest on hardware whose two-qubit gates dominate the error
+budget, and smallest where measurement errors do. In the paper's own setting
+the gap is down to 5 to 6%: easy to miss, but still clear with 2 million shots
+(paired z = −9.9 at d = 3, −3.9 at d = 5).
 
 The exact test agrees. At d = 3, Stim's decomposition makes correlated
 matching get 5 or 6 single faults wrong in every setting, and the X/Z split

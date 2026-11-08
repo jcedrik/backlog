@@ -21,8 +21,15 @@ X/Z split, how many single faults the correlated decoders get wrong, and the
 logical errors of plain and correlated decoding (PyMatching and backlog) under
 both decompositions, on the same shots.
 
+Why the gap depends on the noise model: --mass weighs each setting's error
+model and reports what share of the total error probability sits in errors that
+touch both bases (the ones a decomposition can get wrong) and in the ones Stim
+does get wrong. The mechanisms are the same under both noise models; their
+weights are not (results/noise_study_mass.csv).
+
     make noise-study                       # clones the paper's repository into ext/rcm, then runs
     python python/noise_study.py --rcm ext/rcm --check   # only the two reference checks
+    python python/noise_study.py --rcm ext/rcm --mass    # the probability-mass table, no sampling
     python python/noise_study.py --plot    # redraws results/noise_study.png
 """
 from __future__ import annotations
@@ -272,6 +279,64 @@ def misdecomposed(dem: stim.DetectorErrorModel, basis: np.ndarray) -> tuple[int,
     return bad, total, p_bad / p_all
 
 
+def two_basis_share(dem: stim.DetectorErrorModel, basis: np.ndarray) -> tuple[float, float, float]:
+    """Shares of the total error probability in errors that flip detectors of
+    both types (the ones a decomposition has to split), of one type only, and
+    of neither (an observable flip alone)."""
+    both = one = none = 0.0
+    for inst in dem.flattened():
+        if inst.type != "error":
+            continue
+        dets: set[int] = set()
+        for t in inst.targets_copy():
+            if t.is_relative_detector_id():
+                dets ^= {t.val}
+        kinds = len({int(basis[x]) for x in dets})
+        p = inst.args_copy()[0]
+        if kinds == 2:
+            both += p
+        elif kinds == 1:
+            one += p
+        else:
+            none += p
+    total = both + one + none
+    return both / total, one / total, none / total
+
+
+MASS_FIELDS = ["gates", "noise", "distance", "p", "errors", "two_basis_errors", "misdecomposed",
+               "two_basis_probability", "misdecomposed_probability"]
+
+
+def mass(rcm: str, distances, p: float) -> list[dict]:
+    """Weigh the error model of every setting; no sampling, a few seconds."""
+    rows = []
+    for gates in ("CX", "CZ"):
+        for noise in ("uniform", "si1000"):
+            for d in distances:
+                circuit = cx_circuit(d, noise, p) if gates == "CX" else cz_circuit(rcm, d, noise, p)
+                dem = circuit.detector_error_model(decompose_errors=True)
+                basis = basis_of(circuit, dem)
+                bad, total, bad_share = misdecomposed(dem, basis)
+                both, _, _ = two_basis_share(dem, basis)
+                two = sum(1 for inst in dem.flattened() if inst.type == "error" and len({
+                    int(basis[t.val]) for t in inst.targets_copy() if t.is_relative_detector_id()}) == 2)
+                rows.append(dict(gates=gates, noise=noise, distance=d, p=p, errors=total, two_basis_errors=two,
+                                 misdecomposed=bad, two_basis_probability=both, misdecomposed_probability=bad_share))
+    os.makedirs(RESULTS, exist_ok=True)
+    path = os.path.join(RESULTS, "noise_study_mass.csv")
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=MASS_FIELDS, lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+    print("gates  noise    d   errors  two-basis  misdecomposed   P(two-basis)  P(misdecomposed)")
+    for r in rows:
+        print(f"{r['gates']:5}  {r['noise']:8} {r['distance']}  {r['errors']:6}  {r['two_basis_errors']:9}  "
+              f"{r['misdecomposed']:13}   {100 * r['two_basis_probability']:10.1f}%  "
+              f"{100 * r['misdecomposed_probability']:14.1f}%")
+    print(f"wrote {path}")
+    return rows
+
+
 def faults(dem: stim.DetectorErrorModel):
     """Every distinct single fault: bit-packed symptom and observable flips."""
     table = model_table(dem)
@@ -429,6 +494,8 @@ def main():
     ap.add_argument("--rcm", default=os.path.join(os.path.dirname(__file__), "..", "ext", "rcm"),
                     help="clone of github.com/cesar-hernando/regularized-correlated-matching")
     ap.add_argument("--check", action="store_true", help="only check the noise against the references")
+    ap.add_argument("--mass", action="store_true",
+                    help="weigh the error models: probability in two-basis and misdecomposed errors")
     ap.add_argument("--plot", action="store_true", help=f"redraw results/noise_study.png from {CSV}")
     ap.add_argument("-p", type=float, default=1e-3)
     ap.add_argument("--distances", type=int, nargs="+", default=[3, 5])
@@ -440,6 +507,8 @@ def main():
         plot(os.path.join(RESULTS, "noise_study.png"))
     elif args.check:
         check(args.rcm, args.distances, args.p)
+    elif args.mass:
+        mass(args.rcm, args.distances, args.p)
     else:
         run(args.rcm, args.distances, args.p, dict(zip(args.distances, args.shots)), args.seed)
 

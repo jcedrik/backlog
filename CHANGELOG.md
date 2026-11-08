@@ -8,6 +8,11 @@
   probabilities measured from the detection events (the p_ij method); logical
   error per round, Λ and decoding time per shot
   ([docs/google-data.md](docs/google-data.md)).
+- `python/noise_study.py --mass`: why the decomposition gap depends on the
+  noise model. The same errors are mis-split under uniform noise and SI1000;
+  what differs is the probability they carry (6.1% vs 3.0% at d = 3 with CX
+  gates), because SI1000 puts its weight on measurement and reset errors,
+  which touch one basis. The write-up has the table.
 - `backlog.detector_basis`: X or Z type of every detector from the decomposed
   model alone, so `decompose_by_basis` (and correlated decoding) works on
   circuits without Stim's coordinates, Google's included, and on the
