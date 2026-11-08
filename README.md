@@ -401,6 +401,7 @@ make faults      # every pair of faults at d = 3 and 5, every decoder (~6 min)
 make correlated  # correlated vs plain vs PyMatching, same shots (~15 min on 2 cores)
 make noise-study # the decomposition gap with CX or CZ gates, uniform or SI1000 noise (~3 min)
 make predecoder  # lazy and partial predecoders: work, accuracy, time (~10 min, idle machine)
+make google-data # decode Google's Willow surface code data, backlog vs PyMatching (needs the data, see docs)
 make demo        # the browser demo at http://localhost:8000/demo/
 make compare     # PyMatching vs Union-Find sweep with sinter (long, resumable)
 make streaming   # sliding windows: accuracy, latency, backlog (a few minutes)

@@ -423,6 +423,7 @@ make faults      # chaque paire de fautes à d = 3 et 5, chaque décodeur (~6 mi
 make correlated  # corrélé contre simple contre PyMatching, mêmes tirages (~15 min sur 2 cœurs)
 make noise-study # l'écart de décomposition avec portes CX ou CZ, bruit uniforme ou SI1000 (~3 min)
 make predecoder  # prédécodeurs paresseux et partiel : travail, exactitude, temps (~10 min)
+make google-data # décode les données Willow de Google, backlog contre PyMatching (voir docs)
 make demo        # la démo dans le navigateur, sur http://localhost:8000/demo/
 make compare     # balayage PyMatching contre Union-Find avec sinter (long, reprenable)
 make streaming   # fenêtres glissantes : précision, latence, backlog (quelques minutes)

@@ -229,6 +229,36 @@ def test_sinter_parallel_window_decoder():
 
 # --- Correlated decoding ----------------------------------------------------
 
+@pytest.mark.parametrize("task", ["rotated_memory_z", "rotated_memory_x", "unrotated_memory_z"])
+@pytest.mark.parametrize("d", [3, 5])
+def test_detector_basis_needs_no_coordinates(task, d):
+    """The X or Z type of every detector, from the model's own structure."""
+    circuit = stim.Circuit.generated(f"surface_code:{task}", distance=d, rounds=d,
+                                     after_clifford_depolarization=1e-3, before_measure_flip_probability=1e-3)
+    dem = circuit.detector_error_model(decompose_errors=True)
+    basis = backlog.detector_basis(dem)
+    assert set(basis.tolist()) == {0, 1}
+    if task.startswith("rotated"):  # Stim's coordinates agree; 1 marks the checks protecting the observable
+        want = backlog.surface_code_basis(dem)
+        assert np.array_equal(basis, want if task.endswith("_z") else 1 - want)
+    # no piece of the decomposed model joins the two types
+    for inst in dem.flattened():
+        if inst.type != "error":
+            continue
+        dets: list[int] = []
+        for t in inst.targets_copy() + [stim.DemTarget.separator()]:
+            if t.is_separator():
+                assert len({int(basis[x]) for x in dets}) <= 1, inst
+                dets = []
+            elif t.is_relative_detector_id():
+                dets.append(t.val)
+    # the split works, which it did not for the unrotated code's coordinates
+    split = backlog.decompose_by_basis(dem)
+    assert split.num_errors == dem.num_errors
+    with pytest.raises(ValueError):  # an undecomposed model cannot be told apart
+        backlog.detector_basis(circuit.detector_error_model())
+
+
 def test_correlation_table_of_a_decomposed_y_error():
     # A Y error seen as an X edge (D0 D1) and a Z edge (D2 D3), plus each edge
     # on its own: P(D2 D3 | D0 D1) = P(Y) / P(D0 D1).

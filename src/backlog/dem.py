@@ -178,6 +178,74 @@ def surface_code_basis(dem: stim.DetectorErrorModel) -> np.ndarray:
     return basis
 
 
+def detector_basis(dem: stim.DetectorErrorModel) -> np.ndarray:
+    """Type of every detector, from the model alone: 1 for the checks that
+    protect the logical observable (Z-type in a Z-basis memory experiment,
+    X-type in an X-basis one), 0 for the others.
+
+    A single X or Z error flips checks of one type only, so the graphlike
+    pieces of a decomposed model (one or two detectors each) never join the
+    two types: the detectors fall into two connected components, and the
+    component whose pieces flip the observable is the one that protects it.
+    Which type is called 1 does not matter to ``decompose_by_basis``, which
+    only needs the two groups. This works for any
+    CSS memory circuit whatever its detector coordinates (Stim's generated
+    circuits, Google's experiment circuits). A model with checks of one type
+    only (a one-round memory experiment) gets one basis throughout. Raises
+    ValueError if the pieces connect the detectors into more than two
+    components, or if both components flip the observable.
+    """
+    dem = dem.flattened()
+    n = dem.num_detectors
+    parent = np.arange(n)
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = int(parent[x])
+        return x
+
+    flips_obs: set[int] = set()
+    hyperedges = separators = 0
+    for inst in dem:
+        if inst.type != "error":
+            continue
+        dets: list[int] = []
+        obs = False
+        for t in inst.targets_copy() + [stim.DemTarget.separator()]:
+            if t.is_separator():
+                separators += 1
+                if len(dets) == 2:
+                    parent[find(dets[0])] = find(dets[1])
+                elif len(dets) > 2:
+                    hyperedges += 1
+                if dets and obs:
+                    flips_obs.update(dets)
+                dets, obs = [], False
+            elif t.is_relative_detector_id():
+                dets.append(t.val)
+            elif t.is_logical_observable_id():
+                obs = True
+        separators -= 1  # the one appended above
+    # In an undecomposed model a Y error on a corner data qubit is a
+    # two-detector error of mixed type, which would join the two components.
+    if hyperedges and not separators:
+        raise ValueError("pass a decomposed model "
+                         "(circuit.detector_error_model(decompose_errors=True))")
+    roots = np.array([find(d) for d in range(n)])
+    components = {int(r) for r in roots}
+    if len(components) > 2:
+        raise ValueError(f"the graphlike pieces connect the detectors into {len(components)} "
+                         "components, not two (is this a CSS memory experiment?)")
+    protecting = {int(roots[d]) for d in flips_obs}
+    if len(protecting) > 1:
+        raise ValueError("the logical observable is flipped by pieces of both components: "
+                         "X and Z checks cannot be told apart")
+    if not protecting:  # no observable: the labels are arbitrary, the split is not
+        protecting = {min(components)}
+    return (roots == protecting.pop()).astype(np.int8)
+
+
 def decompose_by_basis(dem: stim.DetectorErrorModel, basis=None) -> stim.DetectorErrorModel:
     """Re-decompose every error into its X-type part and its Z-type part.
 
@@ -190,13 +258,17 @@ def decompose_by_basis(dem: stim.DetectorErrorModel, basis=None) -> stim.Detecto
     fire on their own elsewhere in the model.
 
     ``dem`` may already be decomposed: an error's pieces are merged back first.
-    ``basis[d]`` is the type of detector d; by default it is read from Stim's
-    rotated surface code coordinates. Raises ValueError if an error cannot be
+    ``basis[d]`` is the type of detector d; by default it is read from the
+    model itself (``detector_basis``), or from Stim's rotated surface code
+    coordinates when that fails. Raises ValueError if an error cannot be
     split this way (a part with no counterpart, or more than two types).
     """
     dem = dem.flattened()
     if basis is None:
-        basis = surface_code_basis(dem)
+        try:
+            basis = detector_basis(dem)
+        except ValueError:
+            basis = surface_code_basis(dem)
 
     def symptom(inst):
         dets: set[int] = set()

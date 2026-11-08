@@ -12,7 +12,7 @@
 from .decoder import (DecodeResult, ParallelWindowDecoder, ReferenceDecoder,
                       SlidingWindowDecoder, UnionFindDecoder)
 from .dem import (Correlations, GraphEdges, decompose_by_basis, dem_correlations, dem_to_edges,
-                  detector_layers, regularization_strength, surface_code_basis)
+                  detector_basis, detector_layers, regularization_strength, surface_code_basis)
 from .sinter_decoder import (SinterParallelWindowDecoder, SinterSlidingWindowDecoder,
                              SinterUnionFindDecoder, sinter_decoders)
 
@@ -32,6 +32,7 @@ __all__ = [
     "decompose_by_basis",
     "dem_correlations",
     "dem_to_edges",
+    "detector_basis",
     "detector_layers",
     "regularization_strength",
     "sinter_decoders",

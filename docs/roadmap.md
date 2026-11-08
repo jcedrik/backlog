@@ -22,7 +22,7 @@ Done:
       PyMatching 2 on one core, d = 3 to 13
 - [x] Reference decoder + fuzzing: fast and reference corrections identical
       on 75,000 random cases, parallel edges included
-- [x] Mutation testing: 18 injected bugs, all caught (`make mutants`)
+- [x] Mutation testing: 18 injected bugs, all caught (`make mutants`); 26 since v0.5
 - [x] Python package (pybind11, `pip install .`) and sinter custom decoders,
       sinter command line included
 - [x] Streaming: sliding windows (commit, buffer), windows with the same
@@ -113,6 +113,11 @@ Next:
       ([docs/correlated-decoding-decomposition.md](correlated-decoding-decomposition.md))
 - [ ] Write-up: what building a real-time decoder from scratch taught me,
       with the honest limitations
+- [ ] Real data: decode Google's Willow surface code experiments (Nature 2025,
+      Zenodo 13273331) next to PyMatching, on the shipped noise model and on
+      edge probabilities measured from the detection events; the pipeline is
+      `make google-data` ([docs/google-data.md](google-data.md)), the numbers
+      come once it has run on the 5.7 GB dataset
 - [x] Reported upstream: correlated matching on Stim's decomposition,
       [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193)
 - [ ] Upstream contribution in progress: correlated matching in Deltakit's

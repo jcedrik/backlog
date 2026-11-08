@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- `python/google_data.py` and `make google-data`: decode Google's Willow
+  surface code experiments (Nature 2025, Zenodo 13273331) with PyMatching and
+  backlog, plain and correlated, on Google's SI1000 model and on edge
+  probabilities measured from the detection events (the p_ij method); logical
+  error per round, Λ and decoding time per shot
+  ([docs/google-data.md](docs/google-data.md)).
+- `backlog.detector_basis`: X or Z type of every detector from the decomposed
+  model alone, so `decompose_by_basis` (and correlated decoding) works on
+  circuits without Stim's coordinates, Google's included, and on the
+  unrotated surface code.
+
 ## 0.6.0 (2026-11-05)
 
 - Browser demo (`docs/demo`, GitHub Pages): place bit flips on a surface code

@@ -3,7 +3,7 @@ PY ?= python3
 .PHONY: help deps install cpp test test-cpp test-py test-cli mutants tsan quick baseline plot \
         compare plots streaming streaming-plot parallel parallel-plot scaling latency correlated \
         correlated-speed correlated-plot noise-study noise-study-plot predecoder predecoder-plot \
-        faults faults-plot demo demo-preview quickstart hw hw-sim all clean
+        google-data google-data-plot faults faults-plot demo demo-preview quickstart hw hw-sim all clean
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/'
@@ -99,6 +99,14 @@ predecoder:  ## shots the predecoder settles alone, accuracy and time, d = 3 to 
 
 predecoder-plot:  ## redraw results/predecoder.png
 	$(PY) python/predecoder_benchmark.py --plot
+
+DATA ?= data/google
+
+google-data:  ## decode Google's Willow surface code data (Zenodo 13273331) unzipped in $(DATA) (~1 h)
+	$(PY) python/google_data.py $(DATA)
+
+google-data-plot:  ## redraw results/google/google_data.png and print the Lambda table
+	$(PY) python/google_data.py --plot
 
 faults:  ## exhaustive fault enumeration, d = 3 and 5: which pairs each decoder gets wrong (~6 min)
 	$(PY) python/fault_distance.py
