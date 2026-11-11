@@ -7,7 +7,9 @@
   backlog, plain and correlated, on Google's SI1000 model and on edge
   probabilities measured from the detection events (the p_ij method); logical
   error per round, Λ and decoding time per shot
-  ([docs/google-data.md](docs/google-data.md)).
+  ([docs/google-data.md](docs/google-data.md)). The CSV is written after
+  every experiment and `--resume` carries an interrupted run on; the repository
+  ships the d = 3 and d = 5 results (19.45 million shots).
 - `python/noise_study.py --mass`: why the decomposition gap depends on the
   noise model. The same errors are mis-split under uniform noise and SI1000;
   what differs is the probability they carry (6.1% vs 3.0% at d = 3 with CX

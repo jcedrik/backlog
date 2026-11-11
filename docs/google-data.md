@@ -45,7 +45,17 @@ make google-data-plot                     # redraw the figure, print the table
 Results go to `results/google/google_data.csv` (one row per experiment,
 decoding graph and decoder) and `results/google/google_data.png`. The terminal
 gets a running log and, at the end, the table of logical errors per round and
-the error suppression factor Λ.
+the error suppression factor Λ. The CSV is rewritten after every experiment,
+so a run stopped with Ctrl-C keeps what it did, and `--resume` decodes only
+the experiments the CSV does not hold yet:
+
+```bash
+python python/google_data.py data/google --resume --patches d7_at_q6_7   # the distance-7 code, hours
+```
+
+The distance-3 and distance-5 experiments take about two hours on a laptop;
+the distance-7 code, with 48 detectors per round and up to 250 rounds, takes
+several more.
 
 ## What is decoded, and how
 

@@ -28,7 +28,12 @@ per shot. --plot fits eps per distance across rounds and patches, prints the
 error suppression factor Lambda = eps_d / eps_(d+2), and draws the figure.
 
     python python/google_data.py data/google       # writes results/google/google_data.csv
+    python python/google_data.py data/google --resume --patches d7_at_q6_7   # add what is missing
     python python/google_data.py --plot            # results/google/google_data.png and the table
+
+The CSV is written after every experiment, so an interrupted run keeps what
+it did and --resume carries on from there (a d = 7 experiment takes minutes,
+the whole dataset hours).
 
 Google's own decoding results (decoding_results/ in the dataset), when
 present, are scored on the same shots and listed with dem = google.
@@ -292,22 +297,54 @@ def decode_experiment(exp: Experiment, dem_modes, max_shots, google: bool, log=p
     return rows
 
 
-def run(root: Path, out_csv: Path, *, patches=None, bases=None, rounds=None, dem_modes=("si1000", "pij"),
-        max_shots=None, google=True, log=print) -> list[dict]:
-    exps = discover(root, patches, bases, rounds)
-    if not exps:
-        raise SystemExit(f"no experiments under {root} (expected <patch>/<basis>/r<rounds>/detection_events.b8)")
-    log(f"{len(exps)} experiments under {root}")
-    rows = []
-    for exp in exps:
-        rows += decode_experiment(exp, dem_modes, max_shots, google, log)
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_csv, "w", newline="") as fh:
+def expected_decoders(dem_modes) -> set[tuple[str, str]]:
+    out = set()
+    if "si1000" in dem_modes:
+        out |= {("si1000", d) for d in DECODERS}
+    if "pij" in dem_modes:
+        out |= {("pij", d) for d in DECODERS if d != "pymatching-corr"}
+    return out
+
+
+def read_rows(path: Path) -> list[dict]:
+    with open(path) as fh:
+        return list(csv.DictReader(fh))
+
+
+def write_rows(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
+
+
+def run(root: Path, out_csv: Path, *, patches=None, bases=None, rounds=None, dem_modes=("si1000", "pij"),
+        max_shots=None, google=True, resume=False, log=print) -> list[dict]:
+    """Decode the experiments and write the CSV after each one, so an interrupted
+    run keeps what it did; with resume, experiments the CSV already holds in
+    full are skipped and the rest are added to it. Returns the CSV's rows."""
+    exps = discover(root, patches, bases, rounds)
+    if not exps:
+        raise SystemExit(f"no experiments under {root} (expected <patch>/<basis>/r<rounds>/detection_events.b8)")
+    rows: list[dict] = []
+    if resume and out_csv.exists():
+        done: dict[tuple, set] = {}
+        for r in read_rows(out_csv):
+            done.setdefault((r["patch"], r["basis"], int(r["rounds"])), set()).add((r["dem"], r["decoder"]))
+        complete = {k for k, v in done.items() if expected_decoders(dem_modes) <= v}
+        rows = [r for r in read_rows(out_csv) if (r["patch"], r["basis"], int(r["rounds"])) in complete]
+        skipped = [e for e in exps if (e.patch, e.basis, e.rounds) in complete]
+        exps = [e for e in exps if (e.patch, e.basis, e.rounds) not in complete]
+        log(f"{len(skipped)} experiments already in {out_csv}, {len(exps)} to go")
+    else:
+        log(f"{len(exps)} experiments under {root}")
+    for exp in exps:
+        rows += decode_experiment(exp, dem_modes, max_shots, google, log)
+        write_rows(out_csv, rows)
+    write_rows(out_csv, rows)
     log(f"wrote {out_csv}")
-    return rows
+    return read_rows(out_csv)
 
 
 # ---------------------------------------------------------------- analysis
@@ -416,10 +453,15 @@ def plot(csv_path: Path, png: Path) -> None:
             ax.annotate(text, (x + 0.5, ly), va="center", color=color, fontsize=9)
         ax.set_xticks([3, 5, 7])
         ax.set_xlim(2.6, 10.2)
+    from matplotlib.ticker import FuncFormatter
+    for ax in axes[0]:
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.yaxis.set_minor_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     axes[0][0].set_ylabel("logical error per round (%)", color=ink2)
     shots = sum(int(r["shots"]) for r in rows if r["dem"] == modes[0] and r["decoder"] == "uf")
+    distances = ", ".join(str(d) for d in sorted({int(r["distance"]) for r in rows}))
     fig.suptitle("Google's Willow surface code memory (Nature 2025), decoded offline: "
-                 f"{shots:,} shots, d = 3, 5, 7", color=ink, fontsize=12, x=0.01, ha="left")
+                 f"{shots:,} shots, d = {distances}", color=ink, fontsize=12, x=0.01, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(png, facecolor=surface)
@@ -436,6 +478,8 @@ def main() -> None:
     ap.add_argument("--dem", default="si1000,pij", help="decoding graphs: si1000, pij or both")
     ap.add_argument("--max-shots", type=int, help="decode only the first shots of each experiment")
     ap.add_argument("--no-google-results", action="store_true", help="skip Google's own predictions")
+    ap.add_argument("--resume", action="store_true",
+                    help="keep the experiments already in --out and decode only the missing ones")
     ap.add_argument("--plot", action="store_true", help="draw the figure and print the table from --out")
     args = ap.parse_args()
     out = Path(args.out)
@@ -446,7 +490,7 @@ def main() -> None:
         ap.error("give the dataset folder, or --plot")
     run(Path(args.root), out, patches=args.patches, bases=args.bases, rounds=args.rounds,
         dem_modes=tuple(args.dem.split(",")), max_shots=args.max_shots,
-        google=not args.no_google_results)
+        google=not args.no_google_results, resume=args.resume)
     plot(out, out.with_suffix(".png"))
 
 

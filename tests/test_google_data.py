@@ -116,30 +116,30 @@ def test_pipeline(dataset, tmp_path):
     out = tmp_path / "google_data.csv"
     rows = google_data.run(dataset, out, log=lambda *_: None)
     with open(out) as fh:
-        assert list(csv.DictReader(fh)) and len(list(csv.DictReader(open(out)))) == len(rows)
-    by = {(r["patch"], r["rounds"], r["dem"], r["decoder"]): r for r in rows}
+        assert list(csv.DictReader(fh)) == rows
+    by = {(r["patch"], int(r["rounds"]), r["dem"], r["decoder"]): r for r in rows}
     decoders = {k[3] for k in by if k[2] == "si1000"}
     assert decoders == set(google_data.DECODERS)
     assert {k[3] for k in by if k[2] == "pij"} == {"pymatching", "uf", "uf-corr", "uf-corr-reg"}
     assert {k[3] for k in by if k[2] == "google"} == {"pymatching/obs_flips_predicted"}
     for r in rows:
-        assert r["shots"] == 4000
-        assert 0 <= r["errors"] <= 4000
+        assert r["shots"] == "4000"
+        assert 0 <= int(r["errors"]) <= 4000
         if r["dem"] != "google":
-            assert r["split"] == "basis" and r["skipped_hyperedges"] == 0
+            assert r["split"] == "basis" and r["skipped_hyperedges"] == "0"
     # Google-style prediction file scored like a decoder: PyMatching on the si1000
     # graph decodes the same edges, so the two agree up to ties
     for patch, r in (("d3_at_q0_3", 3), ("d5_at_q0_5", 6)):
-        ours = by[(patch, r, "si1000", "pymatching")]["errors"]
-        theirs = by[(patch, r, "google", "pymatching/obs_flips_predicted")]["errors"]
+        ours = int(by[(patch, r, "si1000", "pymatching")]["errors"])
+        theirs = int(by[(patch, r, "google", "pymatching/obs_flips_predicted")]["errors"])
         assert abs(ours - theirs) <= 0.1 * max(ours, theirs) + 5
     # the measured graph decodes about as well as the true one it was sampled from
     for patch in ("d3_at_q0_3", "d5_at_q0_5"):
-        si = sum(by[(patch, r, "si1000", "uf")]["errors"] for r in (3, 6))
-        pij = sum(by[(patch, r, "pij", "uf")]["errors"] for r in (3, 6))
+        si = sum(int(by[(patch, r, "si1000", "uf")]["errors"]) for r in (3, 6))
+        pij = sum(int(by[(patch, r, "pij", "uf")]["errors"]) for r in (3, 6))
         assert pij <= 1.3 * si + 10
     # more distance, fewer errors per round
-    summary = google_data.summarize([{k: str(v) for k, v in r.items()} for r in rows])
+    summary = google_data.summarize(rows)
     for key, per_d in summary.items():
         if key[0] == "google":
             continue
@@ -149,6 +149,24 @@ def test_pipeline(dataset, tmp_path):
     pytest.importorskip("matplotlib")
     google_data.plot(out, tmp_path / "google_data.png")
     assert (tmp_path / "google_data.png").stat().st_size > 10_000
+
+
+def test_resume_keeps_complete_experiments_and_redoes_partial_ones(dataset, tmp_path):
+    out = tmp_path / "google_data.csv"
+    first = google_data.run(dataset, out, patches=["d3_at_q0_3"], log=lambda *_: None)
+    assert {r["rounds"] for r in first} == {"3", "6"}
+    # an interrupted run: the last experiment lost its final decoder row
+    last = max(i for i, r in enumerate(first) if r["dem"] != "google")
+    google_data.write_rows(out, first[:last] + first[last + 1:])
+    log = []
+    again = google_data.run(dataset, out, resume=True, log=log.append)
+    assert log[0].startswith("1 experiments already in")
+    assert {(r["patch"], r["rounds"]) for r in again} == {("d3_at_q0_3", "3"), ("d3_at_q0_3", "6"),
+                                                          ("d5_at_q0_5", "3"), ("d5_at_q0_5", "6")}
+    assert [r for r in again if r["patch"] == "d3_at_q0_3" and r["rounds"] == "3"] == first[:len(first) // 2]
+    redone = [r for r in again if r["patch"] == "d3_at_q0_3" and r["rounds"] == "6"]
+    assert len(redone) == len(first) // 2  # whole again, decoded afresh
+    assert {r["decoder"] for r in redone} == {r["decoder"] for r in first[len(first) // 2:]}
 
 
 def test_eps_per_round_round_trips():
