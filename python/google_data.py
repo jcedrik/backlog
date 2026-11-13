@@ -252,7 +252,7 @@ def google_results(exp: Experiment, obs: np.ndarray) -> list[tuple[str, int]]:
             continue
         if len(pred) < len(obs):
             continue
-        name = str(f.relative_to(exp.path / "decoding_results").with_suffix(""))
+        name = f.relative_to(exp.path / "decoding_results").with_suffix("").as_posix()
         out.append((name, int(np.count_nonzero(pred[:len(obs)] != obs))))
     return out
 
