@@ -169,6 +169,21 @@ def test_resume_keeps_complete_experiments_and_redoes_partial_ones(dataset, tmp_
     assert {r["decoder"] for r in redone} == {r["decoder"] for r in first[len(first) // 2:]}
 
 
+def test_rescore_google_replaces_the_shipped_rows(dataset, tmp_path):
+    out = tmp_path / "google_data.csv"
+    rows = google_data.run(dataset, out, patches=["d3_at_q0_3"], google=False, log=lambda *_: None)
+    assert not [r for r in rows if r["dem"] == "google"]
+    log = []
+    again = google_data.rescore_google(dataset, out, log=log.append)
+    assert log[0].startswith("4 prediction files from Google scored over 4 experiments")
+    google = [r for r in again if r["dem"] == "google"]
+    assert {(r["patch"], r["rounds"]) for r in google} == {("d3_at_q0_3", "3"), ("d3_at_q0_3", "6"),
+                                                           ("d5_at_q0_5", "3"), ("d5_at_q0_5", "6")}
+    assert [r for r in again if r["dem"] != "google"] == rows
+    # scoring again changes nothing
+    assert google_data.rescore_google(dataset, out, log=lambda *_: None) == again
+
+
 def test_eps_per_round_round_trips():
     eps = 0.004
     for r in (1, 10, 250):

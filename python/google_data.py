@@ -35,8 +35,9 @@ The CSV is written after every experiment, so an interrupted run keeps what
 it did and --resume carries on from there (a d = 7 experiment takes minutes,
 the whole dataset hours).
 
-Google's own decoding results (decoding_results/ in the dataset), when
-present, are scored on the same shots and listed with dem = google.
+Google's own decoders' predictions (decoding_results/<decoder>/obs_flips_predicted.b8
+in the dataset), when present, are scored on the same shots and listed with
+dem = google; --rescore-google does only that, in minutes.
 """
 from __future__ import annotations
 
@@ -64,7 +65,11 @@ FIELDS = ["patch", "distance", "basis", "rounds", "shots", "dem", "decoder", "er
 DECODERS = ["pymatching", "pymatching-corr", "uf", "uf-corr", "uf-corr-reg"]
 ALPHA_REG = 0.5   # alpha*(p) of arXiv:2610.26785 at p = 0.1%, about Google's error rates
 P_FLOOR = 1e-6    # an edge the data never shows still exists
-GOOGLE_EPS7 = 0.00143  # Google's decoder at d = 7, 0.143% per round (Nature 638, 920, 2025)
+# two of the prediction files Google ships (decoding_results/<name>/obs_flips_predicted.b8)
+GOOGLE_SHIPPED = {
+    "correlated_matching_decoder_with_si1000_prior/obs_flips_predicted": "Google's correlated matching, same prior",
+    "libra_decoder_with_rl_optimized_prior/obs_flips_predicted": "Google's Libra, RL-tuned prior",
+}
 
 
 @dataclass(frozen=True)
@@ -319,6 +324,39 @@ def write_rows(path: Path, rows: list[dict]) -> None:
         w.writerows(rows)
 
 
+def load_obs(exp: Experiment, max_shots: int | None) -> np.ndarray:
+    """The measured logical flips alone (no detection events)."""
+    obs_path = next((exp.path / f"obs_flips_actual.{ext}" for ext in ("b8", "01")
+                     if (exp.path / f"obs_flips_actual.{ext}").exists()), None)
+    if obs_path is None:
+        raise FileNotFoundError(f"{exp.path}: no obs_flips_actual.b8 or .01")
+    obs = read_bits(obs_path, 1, bit_packed=False)[:, 0].astype(bool)
+    return obs[:max_shots] if max_shots else obs
+
+
+def rescore_google(root: Path, out_csv: Path, *, patches=None, bases=None, rounds=None, max_shots=None,
+                   log=print) -> list[dict]:
+    """Score the predictions Google shipped with each experiment (decoding_results/)
+    and put them in the CSV in place of its dem = google rows; nothing is decoded,
+    so this takes minutes where a full run takes hours."""
+    exps = discover(root, patches, bases, rounds)
+    rows = [r for r in read_rows(out_csv) if r["dem"] != "google"] if out_csv.exists() else []
+    found = 0
+    for exp in exps:
+        obs = load_obs(exp, max_shots)
+        for name, errors in google_results(exp, obs):
+            p = errors / len(obs)
+            rows.append(dict(patch=exp.patch, distance=exp.distance, basis=exp.basis, rounds=exp.rounds,
+                             shots=len(obs), dem="google", decoder=name, errors=errors, p_logical=p,
+                             eps_round=eps_per_round(p, exp.rounds), eps_err=eps_error(p, exp.rounds, len(obs)),
+                             ns_per_shot="", edges="", skipped_hyperedges="", split=""))
+            found += 1
+    log(f"{found} prediction files from Google scored over {len(exps)} experiments")
+    write_rows(out_csv, rows)
+    log(f"wrote {out_csv}")
+    return read_rows(out_csv)
+
+
 def run(root: Path, out_csv: Path, *, patches=None, bases=None, rounds=None, dem_modes=("si1000", "pij"),
         max_shots=None, google=True, resume=False, log=print) -> list[dict]:
     """Decode the experiments and write the CSV after each one, so an interrupted
@@ -439,9 +477,25 @@ def plot(csv_path: Path, png: Path) -> None:
             ax.errorbar(ds, y, yerr=e, fmt="o-" if name.startswith("uf") else "s--", color=colors[name],
                         linewidth=2 if name.startswith("uf") else 1.4, markersize=5, capsize=2, zorder=3)
             ends.append((y[-1], ds[-1], labels[name], colors[name]))
-        # Google's own decoder on the same experiment, from the paper
-        ax.plot([7], [GOOGLE_EPS7 * 100], marker="D", color=ink, markersize=5, markerfacecolor="none", zorder=4)
-        ends.append((GOOGLE_EPS7 * 100, 7, "Google's decoder, from the paper", ink))
+        # Google's own decoders, shipped with the data and scored on the same shots;
+        # a distance is drawn only where they cover most of the experiments ours do
+        # (Libra ships no prediction for the 1- and 13-round experiments)
+        ours = {d: {(r["patch"], r["basis"], r["rounds"]) for r in rows
+                    if r["dem"] == mode and r["decoder"] == "uf" and int(r["distance"]) == d}
+                for d in (3, 5, 7)}
+        for key, text in GOOGLE_SHIPPED.items():
+            per_d = summary.get(("google", key))
+            if not per_d:
+                continue
+            theirs = {(r["patch"], r["basis"], r["rounds"]) for r in rows
+                      if r["dem"] == "google" and r["decoder"] == key}
+            ds = [d for d in sorted(per_d) if ours[d] and len(ours[d] & theirs) >= 0.8 * len(ours[d])]
+            if not ds:
+                continue
+            y = [per_d[d][0] * 100 for d in ds]
+            ax.plot(ds, y, marker="D", linestyle=":", color=ink, linewidth=1, markersize=5,
+                    markerfacecolor="none", zorder=4)
+            ends.append((y[-1], ds[-1], text, ink))
         # direct labels, pushed apart where lines end together
         ends.sort()
         ys = np.log10([y for y, *_ in ends])
@@ -453,6 +507,8 @@ def plot(csv_path: Path, png: Path) -> None:
             ax.annotate(text, (x + 0.5, ly), va="center", color=color, fontsize=9)
         ax.set_xticks([3, 5, 7])
         ax.set_xlim(2.6, 10.2)
+        top = max(per_d[d][0] * 100 for key, per_d in summary.items() if key[0] in (mode, "google") for d in per_d)
+        ax.set_ylim(min(y for y, *_ in ends) * 0.8, top * 1.1)
     from matplotlib.ticker import FuncFormatter
     for ax in axes[0]:
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
@@ -480,6 +536,8 @@ def main() -> None:
     ap.add_argument("--no-google-results", action="store_true", help="skip Google's own predictions")
     ap.add_argument("--resume", action="store_true",
                     help="keep the experiments already in --out and decode only the missing ones")
+    ap.add_argument("--rescore-google", action="store_true",
+                    help="only score Google's shipped predictions into --out (minutes, nothing decoded)")
     ap.add_argument("--plot", action="store_true", help="draw the figure and print the table from --out")
     args = ap.parse_args()
     out = Path(args.out)
@@ -488,6 +546,11 @@ def main() -> None:
         return
     if not args.root:
         ap.error("give the dataset folder, or --plot")
+    if args.rescore_google:
+        rescore_google(Path(args.root), out, patches=args.patches, bases=args.bases, rounds=args.rounds,
+                       max_shots=args.max_shots)
+        plot(out, out.with_suffix(".png"))
+        return
     run(Path(args.root), out, patches=args.patches, bases=args.bases, rounds=args.rounds,
         dem_modes=tuple(args.dem.split(",")), max_shots=args.max_shots,
         google=not args.no_google_results, resume=args.resume)

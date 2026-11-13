@@ -43,6 +43,16 @@ decoder = backlog.UnionFindDecoder.from_circuit(circuit, correlated=True)
 print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
+## Nouveau depuis la v0.6
+
+- **Décodé sur un vrai ordinateur quantique.** Chaque expérience du jeu de
+  données Willow de Google (Nature 2025, 21 millions de tirages, d = 3, 5, 7),
+  décodée par backlog à côté de PyMatching et des propres décodeurs de
+  Google. Union-Find corrélé est 10 % derrière le couplage corrélé de Google
+  à d = 7 sur le même modèle de bruit, 30 % plus rapide par tirage que celui
+  de PyMatching, et Λ passe de 1,5 à 1,8 avec les corrélations.
+  [Détails](#données-réelles--les-expériences-de-code-de-surface-willow-de-google).
+
 ## Nouveau dans la v0.6
 
 - **Une démo dans le navigateur.** [Bascule des qubits sur un code de surface](https://jcedrik.github.io/backlog/demo/)
@@ -342,6 +352,52 @@ faute seule et chaque paire de fautes du circuit d = 5. Sur les mêmes
   Le temps passe dans les grappes denses, qu'un prédécodeur doit laisser
   tranquilles.
 
+### Données réelles : les expériences de code de surface Willow de Google
+
+![Erreur logique par ronde sur les données Willow de Google, d = 3, 5, 7 : backlog, PyMatching et les décodeurs fournis par Google](results/google/google_data.png)
+
+Tout ce qui précède est mesuré sur du bruit simulé. Google Quantum AI a
+publié les événements de détection de sa mémoire de code de surface sous le
+seuil ([Nature 638, 920 (2025)](https://doi.org/10.1038/s41586-024-08449-y),
+données sur [Zenodo](https://doi.org/10.5281/zenodo.13273331)) : neuf codes
+de distance 3, quatre de distance 5 et le code de distance 7, bases X et Z,
+1 à 250 rondes, 50 000 tirages chacun. `make google-data` décode les 420
+expériences avec PyMatching et backlog, simples et corrélés, sur le modèle de
+bruit SI1000 de Google pour chaque circuit et sur des probabilités d'arêtes
+mesurées dans les données (la méthode p_ij), et note sur les mêmes tirages
+les prédictions que Google a fournies avec les données
+([comment ça marche](docs/google-data.md)). Erreur logique par ronde, ajustée
+par code sur les durées et moyennée par distance comme dans l'article :
+
+| Décodeur, sur le modèle SI1000 de Google | d = 3 | d = 5 | d = 7 | Λ |
+|---|---|---|---|---|
+| PyMatching | 0,976 % | 0,655 % | 0,411 % | 1,54 |
+| backlog Union-Find | 0,979 % | 0,682 % | 0,445 % | 1,48 |
+| PyMatching, corrélé | 0,835 % | 0,439 % | 0,228 % | 1,91 |
+| backlog, corrélé, α = 0,5 | 0,822 % | 0,452 % | 0,247 % | 1,82 |
+| Couplage corrélé de Google, même modèle (prédictions fournies) | | | 0,224 % | |
+| Libra de Google, prior ajusté par RL (prédictions fournies) | | | 0,169 % | |
+
+- **Le pipeline reproduit les chiffres de Google.** PyMatching avec
+  corrélations sur le modèle SI1000 fourni arrive à 2 % des prédictions du
+  propre décodeur par couplage corrélé de Google (0,228 % contre 0,224 % à
+  d = 7), et les prédictions Libra fournies donnent ε₇ = 0,169 % avec cet
+  ajustement, contre 0,171 % ± 0,003 % dans l'article pour ce décodeur. Le
+  chiffre vedette de Google (ε₇ = 0,143 %, Λ = 2,14) vient de son décodeur à
+  réseau de neurones, qui n'est pas fourni.
+- **Union-Find sur du vrai matériel :** égal au couplage à d = 3, 4 %
+  derrière à d = 5, 8 % derrière à d = 7, simple comme corrélé. Le décodage
+  corrélé enlève 16 % des erreurs logiques à d = 3, 34 % à d = 5 et 45 % à
+  d = 7, et la règle régularisée (α = 0,5) fait aussi bien ou mieux que α = 1
+  à chaque distance.
+- **Vitesse sur de vrais syndromes**, d = 7, 110 à 250 rondes, un cœur de
+  portable : backlog 3,2 µs par tirage et par ronde contre 4,0 pour
+  PyMatching ; corrélé, 7,6 contre 11,1. Ce qu'il cède en précision (8 à
+  10 %), il le reprend en temps (20 à 30 %).
+- **Les probabilités d'arêtes mesurées** aident les décodeurs simples de 3 à
+  4 % et les corrélés pas du tout : les corrélations restent celles du modèle
+  SI1000, et les deux ne concordent plus.
+
 ### Matériel (v0 : 1D, non pondéré)
 
 Cœur Union-Find en VHDL, exact bit à bit contre son modèle de référence sur
@@ -502,15 +558,18 @@ docs/          fonctionnement du décodeur, état de l'art, feuille de route (en
   une demi-heure](docs/server-scaling.md)). Le flux rejoue des
   fenêtres mesurées sur des tirages indépendants, une approximation d'une
   seule longue expérience.
-- **Un seul modèle de bruit.** Tous les chiffres ici sont pour un bruit
-  uniforme au niveau circuit ; les constantes de régularisation en
-  particulier sont à réajuster pour un autre modèle (SI1000, modèle tiré du
-  matériel).
+- **Un seul modèle de bruit, ou presque.** Les chiffres simulés sont pour un
+  bruit uniforme au niveau circuit ; les constantes de régularisation en
+  particulier sont à réajuster pour un autre modèle. Les données de Google
+  sont l'exception, et là α = 0,5 est une estimation tirée de
+  `regularization_strength`, pas un ajustement.
 - **α est un paramètre.** Le décodeur ne connaît pas le taux d'erreur
   physique ; `regularization_strength(p)` donne la valeur que ces benchmarks
   appuient.
 - **Précision.** Union-Find, simple ou corrélé, fait encore 1 à 22 % plus
-  d'erreurs logiques que le décodeur par couplage du même type.
+  d'erreurs logiques que le décodeur par couplage du même type sur du bruit
+  simulé, 8 % de plus sur les données de distance 7 de Google, et 46 % de
+  plus que le meilleur décodeur fourni par Google là.
 - **Machine partagée.** Les temps viennent d'une VM infonuagique à 2 cœurs.
   Les reprises concordent à environ 5 % près, mais les temps absolus seront
   différents sur votre machine.

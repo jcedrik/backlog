@@ -8,8 +8,13 @@
   probabilities measured from the detection events (the p_ij method); logical
   error per round, Λ and decoding time per shot
   ([docs/google-data.md](docs/google-data.md)). The CSV is written after
-  every experiment and `--resume` carries an interrupted run on; the repository
-  ships the d = 3 and d = 5 results (19.45 million shots).
+  every experiment and `--resume` carries an interrupted run on;
+  `--rescore-google` scores the predictions Google shipped with the data in
+  minutes. The repository ships the results for all 420 experiments
+  (21 million shots): Union-Find is 8% behind matching at d = 7 and 10%
+  behind Google's own correlated matching on the same model, 20 to 30% faster
+  per shot, and the pipeline reproduces Google's fits within 2%. Both READMEs
+  have the section.
 - `python/noise_study.py --mass`: why the decomposition gap depends on the
   noise model. The same errors are mis-split under uniform noise and SI1000;
   what differs is the probability they carry (6.1% vs 3.0% at d = 3 with CX

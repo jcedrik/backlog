@@ -41,6 +41,15 @@ decoder = backlog.UnionFindDecoder.from_circuit(circuit, correlated=True)
 print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mean())
 ```
 
+## New since v0.6
+
+- **Decoded on a real quantum computer.** Every experiment of Google's
+  Willow surface code dataset (Nature 2025, 21 million shots, d = 3, 5, 7),
+  decoded by backlog next to PyMatching and next to Google's own decoders.
+  Correlated Union-Find is 10% behind Google's correlated matching at d = 7 on
+  the same noise model, 30% faster per shot than PyMatching's, and Λ goes from
+  1.5 to 1.8 with correlations. [Details](#real-data-googles-willow-surface-code-experiments).
+
 ## New in v0.6
 
 - **A browser demo.** [Flip qubits on a surface code](https://jcedrik.github.io/backlog/demo/)
@@ -321,6 +330,50 @@ of the d = 5 circuit correctly. On the same 500,000 shots per point:
   settle are the ones Union-Find already handles cheaply. The time goes into
   the dense clusters, which a predecoder has to leave alone.
 
+### Real data: Google's Willow surface code experiments
+
+![Logical error per round on Google's Willow data, d = 3, 5, 7: backlog, PyMatching and Google's shipped decoders](results/google/google_data.png)
+
+Everything above is measured on simulated noise. Google Quantum AI published
+the detection events of its below-threshold surface code memory
+([Nature 638, 920 (2025)](https://doi.org/10.1038/s41586-024-08449-y), data on
+[Zenodo](https://doi.org/10.5281/zenodo.13273331)): nine distance-3 codes,
+four distance-5 codes and the distance-7 code, X and Z bases, 1 to 250
+rounds, 50,000 shots each. `make google-data` decodes all 420 experiments
+with PyMatching and backlog, plain and correlated, on Google's own SI1000
+noise model of each circuit and on edge probabilities measured from the data
+(the p_ij method), and scores the predictions Google shipped with the data on
+the same shots ([how it works](docs/google-data.md)). Logical error per round,
+fitted per code across durations and averaged per distance as the paper does:
+
+| Decoder, on Google's SI1000 model | d = 3 | d = 5 | d = 7 | Λ |
+|---|---|---|---|---|
+| PyMatching | 0.976% | 0.655% | 0.411% | 1.54 |
+| backlog Union-Find | 0.979% | 0.682% | 0.445% | 1.48 |
+| PyMatching, correlated | 0.835% | 0.439% | 0.228% | 1.91 |
+| backlog, correlated, α = 0.5 | 0.822% | 0.452% | 0.247% | 1.82 |
+| Google's correlated matching, same model (shipped predictions) | | | 0.224% | |
+| Google's Libra, RL-tuned prior (shipped predictions) | | | 0.169% | |
+
+- **The pipeline reproduces Google's numbers.** PyMatching with correlations
+  on the shipped SI1000 model lands within 2% of the predictions Google's own
+  correlated matching decoder shipped with the data (0.228% vs 0.224% at
+  d = 7), and the shipped Libra predictions score ε₇ = 0.169% with this fit,
+  against the paper's 0.171% ± 0.003% for that decoder. Google's headline
+  (ε₇ = 0.143%, Λ = 2.14) is its neural network decoder, which is not shipped.
+- **Union-Find on real hardware:** equal to matching at d = 3, 4% behind at
+  d = 5, 8% behind at d = 7, plain and correlated alike. Correlated decoding
+  removes 16% of the logical errors at d = 3, 34% at d = 5 and 45% at d = 7,
+  and the regularized rule (α = 0.5) is as good as or better than α = 1 at
+  every distance.
+- **Speed on real syndromes**, d = 7, 110 to 250 rounds, one laptop core:
+  backlog 3.2 µs per shot per round against PyMatching's 4.0; correlated,
+  7.6 against 11.1. The gap it gives up in accuracy (8 to 10%) it gets back
+  in time (20 to 30%).
+- **Measured edge probabilities** help the plain decoders by 3 to 4% and the
+  correlated ones not at all: the correlations stay those of the SI1000
+  model, and the two no longer match.
+
 ### Hardware (v0: 1D, unweighted)
 
 Union-Find core in VHDL, bit-exact against its golden model on 10,000+
@@ -474,13 +527,16 @@ docs/          how the decoder works, related work, roadmap
   an hour](docs/server-scaling.md)). The stream replays chain
   windows measured on independent shots, an approximation of one long
   experiment.
-- **One noise model.** Every number here is for uniform circuit-level noise;
-  the regularization constants in particular should be refitted for another
-  model (SI1000, hardware-derived).
+- **One noise model, mostly.** The simulated numbers are for uniform
+  circuit-level noise; the regularization constants in particular should be
+  refitted for another model. The Google data is the exception, and there
+  α = 0.5 was a guess from `regularization_strength`, not a fit.
 - **α is a parameter.** The decoder does not know the physical error rate;
   `regularization_strength(p)` gives the value these benchmarks support.
 - **Accuracy.** Union-Find, plain or correlated, still makes 1 to 22% more
-  logical errors than the matching decoder of the same kind.
+  logical errors than the matching decoder of the same kind on simulated
+  noise, 8% more on Google's distance-7 data, and 46% more than Google's best
+  shipped decoder there.
 - **Shared machine.** Timings come from a 2-core cloud VM. Repeat runs agree
   within about 5%, but absolute times will differ on your machine.
 - **Scope.** Graphlike error models only (Stim decomposes hyperedges), up to

@@ -113,16 +113,18 @@ Next:
       ([docs/correlated-decoding-decomposition.md](correlated-decoding-decomposition.md))
 - [ ] Write-up: what building a real-time decoder from scratch taught me,
       with the honest limitations
-- [ ] Real data: decode Google's Willow surface code experiments (Nature 2025,
-      Zenodo 13273331) next to PyMatching, on the shipped noise model and on
-      edge probabilities measured from the detection events; the pipeline is
-      `make google-data` ([docs/google-data.md](google-data.md)), the numbers
-      come once it has run on the 5.7 GB dataset
+- [x] Real data: all 420 experiments of Google's Willow surface code dataset
+      (Nature 2025, Zenodo 13273331) decoded next to PyMatching and next to
+      Google's shipped decoders. Union-Find is 8% behind matching at d = 7 and
+      10% behind Google's correlated matching on the same model; the pipeline
+      reproduces Google's own fits within 2% ([docs/google-data.md](google-data.md))
 - [x] Reported upstream: correlated matching on Stim's decomposition,
       [PyMatching#193](https://github.com/oscarhiggott/PyMatching/issues/193)
-- [ ] Upstream contribution in progress: correlated matching in Deltakit's
-      decoders, with the X/Z decomposition and the regularized rule
-      ([Deltakit#421](https://github.com/Deltakit/deltakit/issues/421))
+- [ ] Correlated matching with the X/Z decomposition and the regularized rule
+      in Deltakit. Proposed in
+      [Deltakit#421](https://github.com/Deltakit/deltakit/issues/421); the
+      Riverlane team closed it in November 2026 because a new decoder package
+      is on its way, and asked for the proposal again once it is out
 - [x] PyPI releases (`pip install backlog-qec`), wheels for Linux, macOS
       and Windows built and published by `.github/workflows/wheels.yml`
 - [x] A DOI for every release, through Zenodo's GitHub integration
