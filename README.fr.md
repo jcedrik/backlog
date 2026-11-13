@@ -48,9 +48,9 @@ print("taux d'erreur logique :", (decoder.decode_batch(dets) != obs).any(axis=1)
 - **Décodé sur un vrai ordinateur quantique.** Chaque expérience du jeu de
   données Willow de Google (Nature 2025, 21 millions de tirages, d = 3, 5, 7),
   décodée par backlog à côté de PyMatching et des propres décodeurs de
-  Google. Union-Find corrélé est 10 % derrière le couplage corrélé de Google
-  à d = 7 sur le même modèle de bruit, 30 % plus rapide par tirage que celui
-  de PyMatching, et Λ passe de 1,5 à 1,8 avec les corrélations.
+  Google. Union-Find corrélé est 1 à 10 % derrière le couplage corrélé de
+  Google sur le même modèle de bruit (d = 3 à 7), 30 % plus rapide par tirage
+  que celui de PyMatching, et Λ passe de 1,5 à 1,8 avec les corrélations.
   [Détails](#données-réelles--les-expériences-de-code-de-surface-willow-de-google).
 
 ## Nouveau dans la v0.6
@@ -375,16 +375,17 @@ par code sur les durées et moyennée par distance comme dans l'article :
 | backlog Union-Find | 0,979 % | 0,682 % | 0,445 % | 1,48 |
 | PyMatching, corrélé | 0,835 % | 0,439 % | 0,228 % | 1,91 |
 | backlog, corrélé, α = 0,5 | 0,822 % | 0,452 % | 0,247 % | 1,82 |
-| Couplage corrélé de Google, même modèle (prédictions fournies) | | | 0,224 % | |
-| Libra de Google, prior ajusté par RL (prédictions fournies) | | | 0,169 % | |
+| Couplage corrélé de Google, même modèle (prédictions fournies) | 0,811 % | 0,433 % | 0,224 % | 1,90 |
+| Libra de Google, prior ajusté par RL (prédictions fournies) | 0,704 % | 0,348 % | 0,169 % | 2,04 |
 
 - **Le pipeline reproduit les chiffres de Google.** PyMatching avec
-  corrélations sur le modèle SI1000 fourni arrive à 2 % des prédictions du
-  propre décodeur par couplage corrélé de Google (0,228 % contre 0,224 % à
-  d = 7), et les prédictions Libra fournies donnent ε₇ = 0,169 % avec cet
-  ajustement, contre 0,171 % ± 0,003 % dans l'article pour ce décodeur. Le
-  chiffre vedette de Google (ε₇ = 0,143 %, Λ = 2,14) vient de son décodeur à
-  réseau de neurones, qui n'est pas fourni.
+  corrélations sur le modèle SI1000 fourni arrive à 3 % près, à chaque
+  distance, des prédictions du propre décodeur par couplage corrélé de Google
+  (0,228 % contre 0,224 % à d = 7), et les prédictions Libra fournies donnent
+  ε₇ = 0,169 % et Λ = 2,04 avec cet ajustement, contre 0,171 % ± 0,003 % et
+  2,04 ± 0,02 dans l'article pour ce décodeur. Le chiffre vedette de Google
+  (ε₇ = 0,143 %, Λ = 2,14) vient de son décodeur à réseau de neurones, qui
+  n'est pas fourni.
 - **Union-Find sur du vrai matériel :** égal au couplage à d = 3, 4 %
   derrière à d = 5, 8 % derrière à d = 7, simple comme corrélé. Le décodage
   corrélé enlève 16 % des erreurs logiques à d = 3, 34 % à d = 5 et 45 % à

@@ -109,30 +109,34 @@ averaged per distance:
 | p_ij | backlog, correlated, α = 1 | 0.836% | 0.454% | 0.255% | 1.81 |
 | p_ij | backlog, correlated, α = 0.5 | 0.826% | 0.467% | 0.264% | 1.77 |
 
-Google ships the predictions of five of its decoders with the distance-7
-experiments (`decoding_results/`), scored here on the same shots:
+Google ships the predictions of five of its decoders with every experiment
+(`decoding_results/`, 2,044 files), scored here on the same shots:
 
-| Google's decoder (shipped predictions) | d = 7 |
-|---|---|
-| correlated matching, SI1000 prior | 0.224% |
-| correlated matching, RL-optimized prior | 0.206% |
-| Harmony (ensemble), SI1000 prior | 0.207% |
-| Harmony, RL-optimized prior | 0.197% |
-| Libra (ensembled matching synthesis), RL-optimized prior | 0.169% |
+| Google's decoder (shipped predictions) | d = 3 | d = 5 | d = 7 | Λ (fit) |
+|---|---|---|---|---|
+| correlated matching, SI1000 prior | 0.811% | 0.433% | 0.224% | 1.90 |
+| correlated matching, RL-optimized prior | 0.740% | 0.397% | 0.206% | 1.90 |
+| Harmony (ensemble), SI1000 prior | 0.759% | 0.398% | 0.207% | 1.92 |
+| Harmony, RL-optimized prior | 0.714% | 0.375% | 0.197% | 1.90 |
+| Libra (ensembled matching synthesis), RL-optimized prior | 0.704% | 0.348% | 0.169% | 2.04 |
 
 Three checks that the pipeline measures what it should:
 
-- PyMatching with correlations on the shipped SI1000 model is within 2% of
-  Google's own correlated matching decoder with the same prior (0.228% vs
-  0.224%): the graph, the X/Z split and the fit agree with Google's.
-- The shipped Libra predictions give ε₇ = 0.169% with this fit; the paper
-  reports 0.171% ± 0.003% for that decoder (Λ = 2.04). The paper's headline,
-  ε₇ = 0.143% and Λ = 2.14, is its neural network decoder, not shipped.
+- PyMatching with correlations on the shipped SI1000 model is within 3% at
+  every distance of Google's own correlated matching decoder with the same
+  prior (0.835 / 0.439 / 0.228% against 0.811 / 0.433 / 0.224%): the graph,
+  the X/Z split and the fit agree with Google's.
+- The shipped Libra predictions give ε₇ = 0.169% and Λ = 2.04 with this fit;
+  the paper reports 0.171% ± 0.003% and Λ = 2.04 ± 0.02 for that decoder.
+  The paper's headline, ε₇ = 0.143% and Λ = 2.14, is its neural network
+  decoder, not shipped.
 - The X/Z split (`detector_basis`) worked on every one of the 420 circuits,
   with no hyperedge left undecomposed.
 
 What it says about backlog: Union-Find is equal to matching at d = 3, 4%
-behind at d = 5 and 8% behind at d = 7, plain and correlated alike;
+behind at d = 5 and 8% behind at d = 7, plain and correlated alike, and
+correlated Union-Find is 1%, 4% and 10% behind Google's correlated matching
+on the same model;
 correlated decoding removes 16%, 34% and 45% of the logical errors at
 d = 3, 5, 7, and α = 0.5 is as good as or better than α = 1 throughout. On
 the d = 7 experiments of 110 rounds and more, backlog decodes in 3.2 µs per

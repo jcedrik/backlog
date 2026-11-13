@@ -13,8 +13,9 @@
   minutes. The repository ships the results for all 420 experiments
   (21 million shots): Union-Find is 8% behind matching at d = 7 and 10%
   behind Google's own correlated matching on the same model, 20 to 30% faster
-  per shot, and the pipeline reproduces Google's fits within 2%. Both READMEs
-  have the section.
+  per shot, and the pipeline reproduces Google's fits within 3% at every
+  distance (Λ = 2.04 for the shipped Libra predictions, as in the paper).
+  Both READMEs have the section.
 - `python/noise_study.py --mass`: why the decomposition gap depends on the
   noise model. The same errors are mis-split under uniform noise and SI1000;
   what differs is the probability they carry (6.1% vs 3.0% at d = 3 with CX

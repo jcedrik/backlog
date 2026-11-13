@@ -46,9 +46,9 @@ print("logical error rate:", (decoder.decode_batch(dets) != obs).any(axis=1).mea
 - **Decoded on a real quantum computer.** Every experiment of Google's
   Willow surface code dataset (Nature 2025, 21 million shots, d = 3, 5, 7),
   decoded by backlog next to PyMatching and next to Google's own decoders.
-  Correlated Union-Find is 10% behind Google's correlated matching at d = 7 on
-  the same noise model, 30% faster per shot than PyMatching's, and Λ goes from
-  1.5 to 1.8 with correlations. [Details](#real-data-googles-willow-surface-code-experiments).
+  Correlated Union-Find is 1 to 10% behind Google's correlated matching on
+  the same noise model (d = 3 to 7), 30% faster per shot than PyMatching's,
+  and Λ goes from 1.5 to 1.8 with correlations. [Details](#real-data-googles-willow-surface-code-experiments).
 
 ## New in v0.6
 
@@ -352,14 +352,15 @@ fitted per code across durations and averaged per distance as the paper does:
 | backlog Union-Find | 0.979% | 0.682% | 0.445% | 1.48 |
 | PyMatching, correlated | 0.835% | 0.439% | 0.228% | 1.91 |
 | backlog, correlated, α = 0.5 | 0.822% | 0.452% | 0.247% | 1.82 |
-| Google's correlated matching, same model (shipped predictions) | | | 0.224% | |
-| Google's Libra, RL-tuned prior (shipped predictions) | | | 0.169% | |
+| Google's correlated matching, same model (shipped predictions) | 0.811% | 0.433% | 0.224% | 1.90 |
+| Google's Libra, RL-tuned prior (shipped predictions) | 0.704% | 0.348% | 0.169% | 2.04 |
 
 - **The pipeline reproduces Google's numbers.** PyMatching with correlations
-  on the shipped SI1000 model lands within 2% of the predictions Google's own
-  correlated matching decoder shipped with the data (0.228% vs 0.224% at
-  d = 7), and the shipped Libra predictions score ε₇ = 0.169% with this fit,
-  against the paper's 0.171% ± 0.003% for that decoder. Google's headline
+  on the shipped SI1000 model lands within 3% at every distance of the
+  predictions Google's own correlated matching decoder shipped with the data
+  (0.228% vs 0.224% at d = 7), and the shipped Libra predictions score
+  ε₇ = 0.169% and Λ = 2.04 with this fit, against the paper's
+  0.171% ± 0.003% and 2.04 ± 0.02 for that decoder. Google's headline
   (ε₇ = 0.143%, Λ = 2.14) is its neural network decoder, which is not shipped.
 - **Union-Find on real hardware:** equal to matching at d = 3, 4% behind at
   d = 5, 8% behind at d = 7, plain and correlated alike. Correlated decoding
